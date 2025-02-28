@@ -3,7 +3,7 @@ import streamlit as st
 import plotly.express as px
 
 # **🔗 Link CSV dari Google Sheets**
-CSV_URL = "https://docs.google.com/spreadsheets/d/GOOGLE_SHEET_ID/gviz/tq?tqx=out:csv"
+CSV_URL = "https://docs.google.com/spreadsheets/d/1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc/gviz/tq?tqx=out:csv"
 
 # **📥 Baca data dari Google Sheets**
 @st.cache_data
