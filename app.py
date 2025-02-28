@@ -1,31 +1,42 @@
 import pandas as pd
 import streamlit as st
 
-# **🔗 Link CSV dari Google Sheets**
-CSV_URL = "https://docs.google.com/spreadsheets/d/1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc/gviz/tq?tqx=out:csv"
+# **🔗 Link Google Sheets dalam format CSV**
+GOOGLE_SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"
 
-# **📥 Fungsi untuk membaca data dari Google Sheets**
+# **📌 URL untuk membaca daftar sheet (Sheet_List)**
+SHEET_LIST_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet_List"
+
+# **📌 Fungsi untuk membaca daftar sheet**
 @st.cache_data
-def load_data():
-    df = pd.read_csv(CSV_URL)
+def get_sheet_list():
+    df_list = pd.read_csv(SHEET_LIST_URL, header=None)  # Membaca sheet pertama (daftar sheet)
+    return df_list[0].tolist()  # Ambil daftar sheet sebagai list
+
+# **📌 Sidebar - Pilih Sheet Secara Otomatis**
+st.sidebar.header("📊 Filter Data")
+sheet_list = get_sheet_list()
+selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_list)
+
+# **📌 URL untuk membaca data dari sheet yang dipilih**
+SHEET_DATA_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={selected_sheet}"
+
+# **📥 Baca data dari Google Sheets berdasarkan pilihan user**
+@st.cache_data
+def load_data(url):
+    df = pd.read_csv(url)
     df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce').dt.date
     return df
 
-df = load_data()
-
-# **📌 Sidebar - Pilih Sheet (Placeholder, Google Sheets hanya satu source)**
-st.sidebar.header("📊 Filter Data")
-st.sidebar.subheader("📄 Pilih Sheet")
-selected_sheet = st.sidebar.selectbox("Pilih Sheet:", ["Support"])  # Jika ada banyak sheet, ubah list ini
+df = load_data(SHEET_DATA_URL)
 
 # **📌 Sidebar - Pilih Rentang Tanggal**
 min_date = df["Created Date"].min()
 max_date = df["Created Date"].max()
-date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date])
+date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal:", [min_date, max_date])
 
 # **📌 Sidebar - Pilih Support**
-st.sidebar.subheader("👤 Pilih Support")
-support_filter = st.sidebar.selectbox("Pilih Support:", ["All"] + df["Assign To"].unique().tolist())
+support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].unique().tolist())
 
 # **📌 Filter Data berdasarkan pilihan**
 df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= date_range[1])]
@@ -65,47 +76,3 @@ st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {tota
 # **📋 Tampilkan Data yang Difilter**
 st.subheader("📋 Data Tiket yang Difilter")
 st.dataframe(df_filtered)
-
-# **📌 Perhitungan Total Tiket & Tiket FINISH per Hari**
-df_summary = df_filtered.groupby("Created Date").agg(
-    Total_Tiket=("Ticket Number", "count"),
-    Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
-).reset_index()
-
-# **📊 Tampilkan Grafik Statistik**
-if not df_summary.empty:
-    st.subheader("📈 Statistik Tiket Per Hari")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
-        import plotly.express as px
-        fig_bar = px.bar(
-            df_summary,
-            x="Created Date",
-            y=["Total_Tiket", "Total_Finish"],
-            labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
-            title="Total Tiket vs Tiket Selesai (Bar Chart)",
-            barmode="group",
-            color_discrete_map={"Total_Tiket": "#3742fa", "Total_Finish": "#2ed573"}
-        )
-        fig_bar.update_xaxes(type="category")
-        st.plotly_chart(fig_bar)
-
-    with col2:
-        st.markdown("### 📈 Grafik Line Chart (Total Tiket vs Tiket Selesai)")
-        fig_line = px.line(
-            df_summary,
-            x="Created Date",
-            y=["Total_Tiket", "Total_Finish"],
-            markers=True,
-            title="Total Tiket vs Tiket Selesai (Line Chart)",
-            labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
-            line_shape="linear"
-        )
-        fig_line.update_xaxes(type="category")
-        fig_line.update_traces(marker=dict(size=8))
-        st.plotly_chart(fig_line)
-else:
-    st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
