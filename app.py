@@ -9,8 +9,9 @@ SHEET_LIST_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx
 # **📥 Baca daftar sheet dari Sheet_List**
 @st.cache_data
 def load_sheets():
-    df_sheets = pd.read_csv(SHEET_LIST_URL)
-    return df_sheets.iloc[:, 0].tolist()
+    df_sheets = pd.read_csv(SHEET_LIST_URL, header=None)  # Pastikan tanpa header
+    df_sheets = df_sheets.iloc[:, 0].dropna().astype(str).str.strip()  # Hapus NaN & Spasi
+    return df_sheets.tolist()
 
 sheet_names = load_sheets()
 
