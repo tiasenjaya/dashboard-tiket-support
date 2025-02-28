@@ -3,7 +3,7 @@ import streamlit as st
 import plotly.express as px
 
 # **📌 Baca file Excel**
-file_path = "data/tiket_support.xlsx"
+file_path = "tiket_support.xlsx"
 sheets_dict = pd.read_excel(file_path, sheet_name=None)
 
 # **📌 Sidebar - Pilih Sheet**
