@@ -44,7 +44,7 @@ support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assig
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
 with col_main:
-    st.title("📊 Dashboard Tiket Support")
+    st.title(f"📊 Dashboard Tiket {selected_sheet}")
     
     col1, col2, col3 = st.columns(3)
     col1.metric(label="🎟️ Total Tiket", value=len(df))
