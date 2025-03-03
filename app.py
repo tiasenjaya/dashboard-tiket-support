@@ -76,7 +76,7 @@ def highlight_status(row):
     else:
         return ['background-color: lightcoral'] * len(row)
 
-styled_df = df_filtered[["Created Date", "Condition", "Assign To"]].style.apply(highlight_status, axis=1)
+styled_df = df_filtered.style.apply(highlight_status, axis=1)
 
 with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
     st.dataframe(styled_df)
