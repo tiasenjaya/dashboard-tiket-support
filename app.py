@@ -38,13 +38,13 @@ max_date = df["Created Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
 # **👤 Sidebar - Pilih Support**
-Support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
+support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
 # **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar & tampilan lebih rapi**
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
 with col_main:
-    st.title(f"📊 DASHBOARD TIKET {selected_sheet}")
+    st.title(f"📊 Dashboard Tiket {selected_sheet}")
     
     col1, col2, col3 = st.columns(3)
     col1.metric(label="🎟️ Total Tiket", value=len(df))
