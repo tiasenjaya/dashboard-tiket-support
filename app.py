@@ -1,3 +1,13 @@
+import subprocess
+import sys
+
+# Coba install streamlit-aggrid jika belum terinstall
+try:
+    import streamlit_aggrid
+except ModuleNotFoundError:
+    subprocess.run([sys.executable, "-m", "pip", "install", "streamlit-aggrid"])
+    import streamlit_aggrid
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
