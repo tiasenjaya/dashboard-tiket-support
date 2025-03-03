@@ -32,6 +32,16 @@ def load_data(url):
     return df
 
 df = load_data(CSV_URL)
+st.write("🛠 Debugging: DataFrame Sample")
+st.dataframe(df.head())  # Menampilkan 5 baris pertama data
+
+st.write("🔍 Kolom dalam DataFrame:", df.columns.tolist())  # Menampilkan daftar kolom
+
+if "Created Date" in df.columns:
+    st.write("📅 Tanggal Minimum:", df["Created Date"].min())
+    st.write("📅 Tanggal Maksimum:", df["Created Date"].max())
+else:
+    st.error("⚠️ Kolom 'Created Date' tidak ditemukan dalam dataset!")
 
 # ** Penambahan Debugging**
 st.write("📅 Tanggal Minimum di Data:", df["Created Date"].min())
