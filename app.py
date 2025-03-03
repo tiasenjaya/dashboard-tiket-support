@@ -2,6 +2,10 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
+if st.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.experimental_rerun()
+
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
 SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"  # Ganti dengan ID Spreadsheet Anda
 SHEET_LIST_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet_List"
@@ -24,10 +28,14 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:cs
 @st.cache_data
 def load_data(url):
     df = pd.read_csv(url)
-    df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce').dt.date
+    df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce', dayfirst=True).dt.date
     return df
 
 df = load_data(CSV_URL)
+
+# ** Penambahan Debugging**
+st.write("📅 Tanggal Minimum di Data:", df["Created Date"].min())
+st.write("📅 Tanggal Maksimum di Data:", df["Created Date"].max())
 
 # **📊 Sidebar - Pilih Rentang Tanggal**
 st.sidebar.header("📊 Filter Data")
