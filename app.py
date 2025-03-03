@@ -52,17 +52,20 @@ finish_percentage = (finish_tiket / total_tiket) * 100 if total_tiket > 0 else 0
 
 # **📊 Tampilkan Statistik di Dashboard**
 st.title("📊 Dashboard Tiket Support")
+st.markdown("<br>", unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3)
 col1.metric(label="🎟️ Total Tiket", value=total_tiket)
 col2.metric(label="✅ Tiket Selesai", value=finish_tiket)
 col3.metric(label="⏳ Tiket Belum Selesai", value=not_finish_tiket)
 
+st.markdown("<br>", unsafe_allow_html=True)
 st.subheader("📌 Performa Penyelesaian Tiket")
 st.progress(finish_percentage / 100)
 st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
 
 # **📋 Data Tiket yang Difilter**
+st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### 📝 Data Tiket yang Difilter")
 
 def format_status(status):
@@ -89,7 +92,8 @@ df_summary = df_filtered.groupby("Created Date").agg(
 
 # **📊 Menampilkan Grafik Total Tiket vs Tiket Selesai**
 if not df_summary.empty:
-    st.subheader("📈 Statistik Tiket Per Hari")
+    st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("📈 Statistik Tiket Per Hari")
 
     col1, col2 = st.columns(2)
 
