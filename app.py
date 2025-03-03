@@ -1,17 +1,6 @@
-import subprocess
-import sys
-
-# Coba install streamlit-aggrid jika belum terinstall
-try:
-    import streamlit_aggrid
-except ModuleNotFoundError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "streamlit-aggrid"])
-    import streamlit_aggrid
-
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import streamlit_aggrid as ag  # Untuk pagination
 
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
 SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"  # Ganti dengan ID Spreadsheet Anda
