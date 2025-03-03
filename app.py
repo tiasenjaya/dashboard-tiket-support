@@ -1,7 +1,7 @@
+import streamlit as st
 st.set_page_config(layout="wide")  # Mengatur layout menjadi full-width
 
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
