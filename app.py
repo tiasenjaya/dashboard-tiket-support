@@ -37,8 +37,8 @@ min_date = df["Created Date"].min()
 max_date = df["Created Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
-# **👤 Sidebar - Pilih Support**
-support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + df["Assign To"].dropna().unique().tolist())
+# **👤 Sidebar - Pilih Agent**
+Agent_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
 # **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar & tampilan lebih rapi**
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
