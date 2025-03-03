@@ -1,5 +1,5 @@
 import streamlit as st  # Pastikan Streamlit diimpor lebih dulu
-st.set_page_config(layout="wide")  # Mengatur layout menjadi full-width
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 
 import pandas as pd
 import plotly.express as px  # Import lainnya setelahnya
