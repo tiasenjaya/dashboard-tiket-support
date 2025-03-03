@@ -18,7 +18,7 @@ sheet_names = load_sheets()
 
 # **📄 Sidebar - Pilih Sheet**
 st.sidebar.header("📊 Filter Data")
-selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
+selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names, key="sheet_select_sidebar")
 
 # **📥 Baca Data dari Google Sheets berdasarkan Sheet yang dipilih**
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={selected_sheet}"
@@ -38,7 +38,7 @@ max_date = df["Created Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
 # **👤 Sidebar - Pilih Support**
-support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
+support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist(), key="support_select_sidebar")
 
 # **📌 Filter Data berdasarkan pilihan**
 df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= date_range[1])]
