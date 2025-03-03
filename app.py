@@ -2,10 +2,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-if st.button("🔄 Refresh Data"):
-    st.cache_data.clear()
-    st.experimental_rerun()
-
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
 SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"  # Ganti dengan ID Spreadsheet Anda
 SHEET_LIST_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Sheet_List"
@@ -13,9 +9,8 @@ SHEET_LIST_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx
 # **📥 Baca daftar sheet dari Sheet_List**
 @st.cache_data
 def load_sheets():
-    df_sheets = pd.read_csv(SHEET_LIST_URL, header=None)  # Pastikan tanpa header
-    df_sheets = df_sheets.iloc[:, 0].dropna().astype(str).str.strip()  # Hapus NaN & Spasi
-    return df_sheets.tolist()
+    df_sheets = pd.read_csv(SHEET_LIST_URL, header=None)
+    return df_sheets.iloc[:, 0].dropna().tolist()
 
 sheet_names = load_sheets()
 
@@ -29,37 +24,10 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:cs
 def load_data(url):
     df = pd.read_csv(url)
     df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce', dayfirst=True).dt.date
+    df = df.dropna(subset=["Created Date"])  # Hapus data yang gagal dikonversi
     return df
 
 df = load_data(CSV_URL)
-st.write("🛠 Debugging: DataFrame Sample")
-st.dataframe(df.head())  # Menampilkan 5 baris pertama data
-
-st.write("🔍 Kolom dalam DataFrame:", df.columns.tolist())  # Menampilkan daftar kolom
-
-if "Created Date" in df.columns:
-    st.write("📅 Tanggal Minimum:", df["Created Date"].min())
-    st.write("📅 Tanggal Maksimum:", df["Created Date"].max())
-else:
-    st.error("⚠️ Kolom 'Created Date' tidak ditemukan dalam dataset!")
-
-# ** Penambahan Debugging**
-st.write("📅 Tanggal Minimum di Data:", df["Created Date"].min())
-st.write("📅 Tanggal Maksimum di Data:", df["Created Date"].max())
-
-# 🔍 Cek tipe data sebelum konversi
-st.write("🛠 Debugging: Tipe Data Kolom Created Date", df["Created Date"].dtype)
-
-# Pastikan "Created Date" dalam format datetime
-df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce', dayfirst=True)
-
-# 🔍 Cek apakah ada data yang gagal dikonversi
-st.write("📋 Data yang gagal dikonversi:", df[df["Created Date"].isna()])
-
-# Setelah memastikan semuanya dalam format datetime, baru ambil min & max
-st.write("📅 Tanggal Minimum:", df["Created Date"].min())
-st.write("📅 Tanggal Maksimum:", df["Created Date"].max())
-
 
 # **📊 Sidebar - Pilih Rentang Tanggal**
 st.sidebar.header("📊 Filter Data")
@@ -141,3 +109,8 @@ if not df_summary.empty:
         st.plotly_chart(fig_line)
 else:
     st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
+
+# **🔄 Tombol Refresh Data**
+if st.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.experimental_rerun()
