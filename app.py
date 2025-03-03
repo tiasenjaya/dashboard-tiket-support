@@ -47,6 +47,20 @@ else:
 st.write("📅 Tanggal Minimum di Data:", df["Created Date"].min())
 st.write("📅 Tanggal Maksimum di Data:", df["Created Date"].max())
 
+# 🔍 Cek tipe data sebelum konversi
+st.write("🛠 Debugging: Tipe Data Kolom Created Date", df["Created Date"].dtype)
+
+# Pastikan "Created Date" dalam format datetime
+df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce', dayfirst=True)
+
+# 🔍 Cek apakah ada data yang gagal dikonversi
+st.write("📋 Data yang gagal dikonversi:", df[df["Created Date"].isna()])
+
+# Setelah memastikan semuanya dalam format datetime, baru ambil min & max
+st.write("📅 Tanggal Minimum:", df["Created Date"].min())
+st.write("📅 Tanggal Maksimum:", df["Created Date"].max())
+
+
 # **📊 Sidebar - Pilih Rentang Tanggal**
 st.sidebar.header("📊 Filter Data")
 min_date = df["Created Date"].min()
