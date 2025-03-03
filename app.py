@@ -93,7 +93,7 @@ df_summary = df_filtered.groupby("Created Date").agg(
 # **📊 Menampilkan Grafik Total Tiket vs Tiket Selesai**
 if not df_summary.empty:
     st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📈 Statistik Tiket Per Hari")
+    st.subheader("📈 Statistik Tiket Per Hari")
 
     col1, col2 = st.columns(2)
 
