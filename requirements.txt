@@ -1,4 +1,4 @@
 pandas
 streamlit
 plotly
-streamlit-aggrid
+streamlit-aggrid==0.3.4
