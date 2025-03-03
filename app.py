@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import streamlit_aggrid as ag  # Untuk pagination
 
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
 SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"  # Ganti dengan ID Spreadsheet Anda
@@ -63,13 +64,28 @@ st.progress(finish_percentage / 100)
 st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
 
 # **📋 Data Tiket yang Difilter**
-st.subheader("📋 Data Tiket yang Difilter")
-st.dataframe(df_filtered[["Created Date", "Condition", "Assign To"]])
+st.markdown("### 📝 Data Tiket yang Difilter")
+
+def format_status(status):
+    return "✅ FINISH" if status == "FINISH" else "❌ NOT FINISH"
+
+df_filtered["Condition"] = df_filtered["Condition"].apply(format_status)
+
+def highlight_status(row):
+    if row["Condition"] == "✅ FINISH":
+        return ['background-color: lightgreen'] * len(row)
+    else:
+        return ['background-color: lightcoral'] * len(row)
+
+styled_df = df_filtered[["Created Date", "Condition", "Assign To"]].style.apply(highlight_status, axis=1)
+
+with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
+    st.dataframe(styled_df)
 
 # **📈 Perhitungan Total Tiket & Tiket FINISH per Hari**
 df_summary = df_filtered.groupby("Created Date").agg(
     Total_Tiket=("Ticket Number", "count"),
-    Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
+    Total_Finish=("Condition", lambda x: (x == "✅ FINISH").sum())
 ).reset_index()
 
 # **📊 Menampilkan Grafik Total Tiket vs Tiket Selesai**
@@ -86,11 +102,9 @@ if not df_summary.empty:
             y=["Total_Tiket", "Total_Finish"],
             labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
             title="Total Tiket vs Tiket Selesai (Bar Chart)",
-            barmode="group",
-            color_discrete_map={"Total_Tiket": "#3742fa", "Total_Finish": "#2ed573"}
+            barmode="group"
         )
         fig_bar.update_xaxes(type="category")
-        fig_bar.update_layout(yaxis_title="Total Tiket", xaxis_title="Tanggal")
         st.plotly_chart(fig_bar)
 
     with col2:
@@ -100,12 +114,9 @@ if not df_summary.empty:
             x="Created Date",
             y=["Total_Tiket", "Total_Finish"],
             markers=True,
-            title="Total Tiket vs Tiket Selesai (Line Chart)",
-            labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
-            line_shape="linear"
+            title="Total Tiket vs Tiket Selesai (Line Chart)"
         )
         fig_line.update_xaxes(type="category")
-        fig_line.update_traces(marker=dict(size=8))
         st.plotly_chart(fig_line)
 else:
     st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
