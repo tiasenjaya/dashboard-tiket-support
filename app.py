@@ -48,11 +48,6 @@ if support_filter != "All":
 
 # **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar**
 col_sidebar, col_main = st.columns([1, 3])  # Sidebar lebih kecil, konten lebih besar
-
-with col_sidebar:
-    selected_sheet = st.selectbox("📄 Pilih Sheet:", sheet_names, key="sheet_select_main")
-    date_range = st.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date, key="date_select_main")
-    support_filter = st.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist(), key="support_select_main")
     
 with col_main:
     st.title("📊 Dashboard Tiket Support")
