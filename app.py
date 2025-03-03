@@ -1,8 +1,8 @@
-import streamlit as st
+import streamlit as st  # Pastikan Streamlit diimpor lebih dulu
 st.set_page_config(layout="wide")  # Mengatur layout menjadi full-width
 
 import pandas as pd
-import plotly.express as px
+import plotly.express as px  # Import lainnya setelahnya
 
 # **🔗 Link ke Google Sheets (Pastikan diubah ke format CSV)**
 SHEET_ID = "1Nev5-cSUKDlU4z3glFC90VhJjxv09njFlbJWK5G4oOc"  # Ganti dengan ID Spreadsheet Anda
@@ -17,6 +17,7 @@ def load_sheets():
 sheet_names = load_sheets()
 
 # **📄 Sidebar - Pilih Sheet**
+st.sidebar.header("📊 Filter Data")
 selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
 
 # **📥 Baca Data dari Google Sheets berdasarkan Sheet yang dipilih**
@@ -32,7 +33,6 @@ def load_data(url):
 df = load_data(CSV_URL)
 
 # **📊 Sidebar - Pilih Rentang Tanggal**
-st.sidebar.header("📊 Filter Data")
 min_date = df["Created Date"].min()
 max_date = df["Created Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
@@ -46,85 +46,66 @@ df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= 
 if support_filter != "All":
     df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
 
-# **🎟️ Hitung Jumlah Tiket**
-total_tiket = len(df_filtered)
-finish_tiket = len(df_filtered[df_filtered["Condition"] == "FINISH"])
-not_finish_tiket = len(df_filtered[df_filtered["Condition"] == "NOT FINISH"])
-finish_percentage = (finish_tiket / total_tiket) * 100 if total_tiket > 0 else 0
+# **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar**
+col_sidebar, col_main = st.columns([1, 3])  # Sidebar lebih kecil, konten lebih besar
 
-# **📊 Tampilkan Statistik di Dashboard**
-st.title("📊 Dashboard Tiket Support")
-st.markdown("<br>", unsafe_allow_html=True)
+with col_sidebar:
+    st.sidebar.header("📊 Filter Data")
+    selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
+    date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
+    support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
-col1, col2, col3 = st.columns(3)
-col1.metric(label="🎟️ Total Tiket", value=total_tiket)
-col2.metric(label="✅ Tiket Selesai", value=finish_tiket)
-col3.metric(label="⏳ Tiket Belum Selesai", value=not_finish_tiket)
+with col_main:
+    st.title("📊 Dashboard Tiket Support")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(label="🎟️ Total Tiket", value=len(df_filtered))
+    col2.metric(label="✅ Tiket Selesai", value=len(df_filtered[df_filtered["Condition"] == "FINISH"]))
+    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df_filtered[df_filtered["Condition"] == "NOT FINISH"]))
 
-st.markdown("<br>", unsafe_allow_html=True)
-st.subheader("📌 Performa Penyelesaian Tiket")
-st.progress(finish_percentage / 100)
-st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
+    st.subheader("📌 Performa Penyelesaian Tiket")
+    finish_percentage = (len(df_filtered[df_filtered["Condition"] == "FINISH"]) / len(df_filtered)) * 100 if len(df_filtered) > 0 else 0
+    st.progress(finish_percentage / 100)
+    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df_filtered)} tiket.")
 
-# **📋 Data Tiket yang Difilter**
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("### 📝 Data Tiket yang Difilter")
+    st.markdown("### 📝 Data Tiket yang Difilter")
+    with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
+        st.dataframe(df_filtered)
 
-def format_status(status):
-    return "✅ FINISH" if status == "FINISH" else "❌ NOT FINISH"
-
-df_filtered["Condition"] = df_filtered["Condition"].apply(format_status)
-
-def highlight_status(row):
-    if row["Condition"] == "✅ FINISH":
-        return ['background-color: lightgreen'] * len(row)
-    else:
-        return ['background-color: lightcoral'] * len(row)
-
-styled_df = df_filtered.style.apply(highlight_status, axis=1)
-
-with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
-    st.dataframe(styled_df)
-
-# **📈 Perhitungan Total Tiket & Tiket FINISH per Hari**
-df_summary = df_filtered.groupby("Created Date").agg(
-    Total_Tiket=("Ticket Number", "count"),
-    Total_Finish=("Condition", lambda x: (x == "✅ FINISH").sum())
-).reset_index()
-
-# **📊 Menampilkan Grafik Total Tiket vs Tiket Selesai**
-if not df_summary.empty:
-    st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("📈 Statistik Tiket Per Hari")
+    if not df_filtered.empty:
+        df_summary = df_filtered.groupby("Created Date").agg(
+            Total_Tiket=("Ticket Number", "count"),
+            Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
+        ).reset_index()
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-    with col1:
-        st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
-        fig_bar = px.bar(
-            df_summary,
-            x="Created Date",
-            y=["Total_Tiket", "Total_Finish"],
-            labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
-            title="Total Tiket vs Tiket Selesai (Bar Chart)",
-            barmode="group"
-        )
-        fig_bar.update_xaxes(type="category")
-        st.plotly_chart(fig_bar)
+        with col1:
+            st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
+            fig_bar = px.bar(
+                df_summary,
+                x="Created Date",
+                y=["Total_Tiket", "Total_Finish"],
+                labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
+                title="Total Tiket vs Tiket Selesai (Bar Chart)",
+                barmode="group"
+            )
+            fig_bar.update_xaxes(type="category")
+            st.plotly_chart(fig_bar)
 
-    with col2:
-        st.markdown("### 📈 Grafik Line Chart (Total Tiket vs Tiket Selesai)")
-        fig_line = px.line(
-            df_summary,
-            x="Created Date",
-            y=["Total_Tiket", "Total_Finish"],
-            markers=True,
-            title="Total Tiket vs Tiket Selesai (Line Chart)"
-        )
-        fig_line.update_xaxes(type="category")
-        st.plotly_chart(fig_line)
-else:
-    st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
+        with col2:
+            st.markdown("### 📈 Grafik Line Chart (Total Tiket vs Tiket Selesai)")
+            fig_line = px.line(
+                df_summary,
+                x="Created Date",
+                y=["Total_Tiket", "Total_Finish"],
+                markers=True,
+                title="Total Tiket vs Tiket Selesai (Line Chart)"
+            )
+            fig_line.update_xaxes(type="category")
+            st.plotly_chart(fig_line)
+    else:
+        st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
 
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
