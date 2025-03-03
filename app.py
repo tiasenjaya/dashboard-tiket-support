@@ -40,6 +40,12 @@ date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_
 # **👤 Sidebar - Pilih Support**
 support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
+# **📌 Filter Data berdasarkan pilihan**
+df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= date_range[1])]
+
+if support_filter != "All":
+    df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
+
 # **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar & tampilan lebih rapi**
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
@@ -47,22 +53,22 @@ with col_main:
     st.title(f"📊 Dashboard Tiket {selected_sheet}")
     
     col1, col2, col3 = st.columns(3)
-    col1.metric(label="🎟️ Total Tiket", value=len(df))
-    col2.metric(label="✅ Tiket Selesai", value=len(df[df["Condition"] == "FINISH"]))
-    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df[df["Condition"] == "NOT FINISH"]))
+    col1.metric(label="🎟️ Total Tiket", value=len(df_filtered))
+    col2.metric(label="✅ Tiket Selesai", value=len(df_filtered[df_filtered["Condition"] == "FINISH"]))
+    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df_filtered[df_filtered["Condition"] == "NOT FINISH"]))
 
     st.subheader("📌 Performa Penyelesaian Tiket")
-    finish_percentage = (len(df[df["Condition"] == "FINISH"]) / len(df)) * 100 if len(df) > 0 else 0
+    finish_percentage = (len(df_filtered[df_filtered["Condition"] == "FINISH"]) / len(df_filtered)) * 100 if len(df_filtered) > 0 else 0
     st.progress(finish_percentage / 100)
-    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df)} tiket.")
+    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df_filtered)} tiket.")
 
     st.markdown("### 📝 Data Tiket yang Difilter")
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
-        st.dataframe(df)
+        st.dataframe(df_filtered)
 
     st.subheader("📈 Statistik Tiket Per Hari")
-    if not df.empty:
-        df_summary = df.groupby("Created Date").agg(
+    if not df_filtered.empty:
+        df_summary = df_filtered.groupby("Created Date").agg(
             Total_Tiket=("Ticket Number", "count"),
             Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
         ).reset_index()
