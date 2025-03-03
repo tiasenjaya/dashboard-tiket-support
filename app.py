@@ -1,5 +1,5 @@
 import streamlit as st  # Pastikan Streamlit diimpor lebih dulu
-st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")  # Mengatur layout menjadi full-width
 
 import pandas as pd
 import plotly.express as px  # Import lainnya setelahnya
@@ -18,7 +18,7 @@ sheet_names = load_sheets()
 
 # **📄 Sidebar - Pilih Sheet**
 st.sidebar.header("📊 Filter Data")
-selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names, key="sheet_select_sidebar")
+selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
 
 # **📥 Baca Data dari Google Sheets berdasarkan Sheet yang dipilih**
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={selected_sheet}"
@@ -38,36 +38,31 @@ max_date = df["Created Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
 # **👤 Sidebar - Pilih Support**
-support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist(), key="support_select_sidebar")
+support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
-# **📌 Filter Data berdasarkan pilihan**
-df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= date_range[1])]
+# **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar & tampilan lebih rapi**
+col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
-if support_filter != "All":
-    df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
-
-# **🔄 Pengaturan Layout agar Sidebar tidak terlalu besar**
-col_sidebar, col_main = st.columns([1, 3])  # Sidebar lebih kecil, konten lebih besar
-    
 with col_main:
     st.title("📊 Dashboard Tiket Support")
+    
     col1, col2, col3 = st.columns(3)
-    col1.metric(label="🎟️ Total Tiket", value=len(df_filtered))
-    col2.metric(label="✅ Tiket Selesai", value=len(df_filtered[df_filtered["Condition"] == "FINISH"]))
-    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df_filtered[df_filtered["Condition"] == "NOT FINISH"]))
+    col1.metric(label="🎟️ Total Tiket", value=len(df))
+    col2.metric(label="✅ Tiket Selesai", value=len(df[df["Condition"] == "FINISH"]))
+    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df[df["Condition"] == "NOT FINISH"]))
 
     st.subheader("📌 Performa Penyelesaian Tiket")
-    finish_percentage = (len(df_filtered[df_filtered["Condition"] == "FINISH"]) / len(df_filtered)) * 100 if len(df_filtered) > 0 else 0
+    finish_percentage = (len(df[df["Condition"] == "FINISH"]) / len(df)) * 100 if len(df) > 0 else 0
     st.progress(finish_percentage / 100)
-    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df_filtered)} tiket.")
+    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df)} tiket.")
 
     st.markdown("### 📝 Data Tiket yang Difilter")
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
-        st.dataframe(df_filtered)
+        st.dataframe(df)
 
     st.subheader("📈 Statistik Tiket Per Hari")
-    if not df_filtered.empty:
-        df_summary = df_filtered.groupby("Created Date").agg(
+    if not df.empty:
+        df_summary = df.groupby("Created Date").agg(
             Total_Tiket=("Ticket Number", "count"),
             Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
         ).reset_index()
