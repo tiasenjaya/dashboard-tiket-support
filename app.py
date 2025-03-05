@@ -54,7 +54,7 @@ col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kana
 
 with col_main:
     DASHBOARD_TITLE = "📊 Performance Dashboard"  # Ganti sesuai keinginan
-st.title(DASHBOARD_TITLE)
+    st.title(DASHBOARD_TITLE)
     
     col1, col2, col3, col4 = st.columns(4)
     
