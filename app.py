@@ -26,22 +26,25 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:cs
 @st.cache_data
 def load_data(url):
     df = pd.read_csv(url)
-    df["Created Date"] = pd.to_datetime(df["Created Date"], errors='coerce', dayfirst=True).dt.date
-    df = df.dropna(subset=["Created Date"])  # Hapus data yang gagal dikonversi
+    df.rename(columns=lambda x: x.strip(), inplace=True)  # Menghilangkan spasi ekstra di nama kolom
+    df["Ticket Number"] = df["Ticket Number"].astype(str)  # Pastikan Ticket Number tidak diformat sebagai angka
+    df["Created"] = pd.to_datetime(df["Created"], errors='coerce', dayfirst=True).dt.date
+    df["Finish"] = pd.to_datetime(df["Finish"], errors='coerce', dayfirst=True).dt.date
+    df = df.dropna(subset=["Created"])  # Hapus data yang gagal dikonversi
     return df
 
 df = load_data(CSV_URL)
 
 # **📊 Sidebar - Pilih Rentang Tanggal**
-min_date = df["Created Date"].min()
-max_date = df["Created Date"].max()
+min_date = df["Created"].min()
+max_date = df["Created"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
 # **👤 Sidebar - Pilih Support**
 support_filter = st.sidebar.selectbox("👤 Pilih Support:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
 # **📌 Filter Data berdasarkan pilihan**
-df_filtered = df[(df["Created Date"] >= date_range[0]) & (df["Created Date"] <= date_range[1])]
+df_filtered = df[(df["Created"] >= date_range[0]) & (df["Created"] <= date_range[1])]
 
 if support_filter != "All":
     df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
@@ -52,15 +55,22 @@ col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kana
 with col_main:
     st.title(f"📊 Dashboard Tiket {selected_sheet}")
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric(label="🎟️ Total Tiket", value=len(df_filtered))
-    col2.metric(label="✅ Tiket Selesai", value=len(df_filtered[df_filtered["Condition"] == "FINISH"]))
-    col3.metric(label="⏳ Tiket Belum Selesai", value=len(df_filtered[df_filtered["Condition"] == "NOT FINISH"]))
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_tiket = len(df_filtered)
+    selesai_hari_h = len(df_filtered[df_filtered["Created"] == df_filtered["Finish"]])
+    selesai_setelah_hari_h = len(df_filtered[df_filtered["Created"] < df_filtered["Finish"]])
+    belum_selesai = len(df_filtered[df_filtered["Status"] != "Finish"])
+
+    col1.metric(label="🎟️ Total Tiket", value=total_tiket)
+    col2.metric(label="✅ Tiket Selesai di Hari H", value=selesai_hari_h)
+    col3.metric(label="📋 Tiket Selesai Setelah Hari H", value=selesai_setelah_hari_h)
+    col4.metric(label="⏳ Tiket Belum Selesai", value=belum_selesai)
 
     st.subheader("📌 Performa Penyelesaian Tiket")
-    finish_percentage = (len(df_filtered[df_filtered["Condition"] == "FINISH"]) / len(df_filtered)) * 100 if len(df_filtered) > 0 else 0
+    finish_percentage = ((selesai_hari_h + selesai_setelah_hari_h) / total_tiket) * 100 if total_tiket > 0 else 0
     st.progress(finish_percentage / 100)
-    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {len(df_filtered)} tiket.")
+    st.write(f"✅ **{finish_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
 
     st.markdown("### 📝 Data Tiket yang Difilter")
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
@@ -68,9 +78,9 @@ with col_main:
 
     st.subheader("📈 Statistik Tiket Per Hari")
     if not df_filtered.empty:
-        df_summary = df_filtered.groupby("Created Date").agg(
+        df_summary = df_filtered.groupby("Created").agg(
             Total_Tiket=("Ticket Number", "count"),
-            Total_Finish=("Condition", lambda x: (x == "FINISH").sum())
+            Total_Finish=("Status", lambda x: (x == "Finish").sum())
         ).reset_index()
 
         col1, col2 = st.columns(2)
@@ -79,9 +89,9 @@ with col_main:
             st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
             fig_bar = px.bar(
                 df_summary,
-                x="Created Date",
+                x="Created",
                 y=["Total_Tiket", "Total_Finish"],
-                labels={"value": "Jumlah Tiket", "Created Date": "Tanggal"},
+                labels={"value": "Jumlah Tiket", "Created": "Tanggal"},
                 title="Total Tiket vs Tiket Selesai (Bar Chart)",
                 barmode="group"
             )
@@ -92,7 +102,7 @@ with col_main:
             st.markdown("### 📈 Grafik Line Chart (Total Tiket vs Tiket Selesai)")
             fig_line = px.line(
                 df_summary,
-                x="Created Date",
+                x="Created",
                 y=["Total_Tiket", "Total_Finish"],
                 markers=True,
                 title="Total Tiket vs Tiket Selesai (Line Chart)"
