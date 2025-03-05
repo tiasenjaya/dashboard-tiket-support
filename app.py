@@ -114,19 +114,6 @@ with col_main:
             )
             st.plotly_chart(fig_pie)
 
-    st.subheader("📆 Performa Penyelesaian Tiket Berdasarkan Hari")
-    df_filtered["Created_Day"] = pd.to_datetime(df_filtered["Created"]).dt.day_name()
-    df_daywise = df_filtered.groupby("Created_Day").size().reset_index(name="Jumlah Tiket")
-
-    fig_daywise = px.bar(
-        df_daywise,
-        x="Created_Day",
-        y="Jumlah Tiket",
-        title="Jumlah Tiket Berdasarkan Hari",
-        labels={"Created_Day": "Hari", "Jumlah Tiket": "Jumlah"}
-    )
-    st.plotly_chart(fig_daywise)
-
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
