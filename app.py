@@ -86,31 +86,45 @@ with col_main:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
+            st.markdown("### 📊 Grafik Bar Chart (Tren Penyelesaian Tiket Per Hari)")
             fig_bar = px.bar(
                 df_summary,
                 x="Created",
                 y=["Total_Tiket", "Total_Finish"],
                 labels={"value": "Jumlah Tiket", "Created": "Tanggal"},
-                title="Total Tiket vs Tiket Selesai (Bar Chart)",
+                title="Tren Penyelesaian Tiket Per Hari",
                 barmode="group"
             )
             fig_bar.update_xaxes(type="category")
             st.plotly_chart(fig_bar)
 
         with col2:
-            st.markdown("### 📈 Grafik Line Chart (Total Tiket vs Tiket Selesai)")
-            fig_line = px.line(
-                df_summary,
-                x="Created",
-                y=["Total_Tiket", "Total_Finish"],
-                markers=True,
-                title="Total Tiket vs Tiket Selesai (Line Chart)"
+            st.markdown("### 🏆 Perbandingan Persentase Penyelesaian Tiket (Pie Chart)")
+            df_pie = pd.DataFrame({
+                "Kategori": ["Tiket Selesai di Hari H", "Tiket Selesai Setelah Hari H", "Tiket Belum Selesai"],
+                "Jumlah": [selesai_hari_h, selesai_setelah_hari_h, belum_selesai]
+            })
+
+            fig_pie = px.pie(
+                df_pie, 
+                names="Kategori", 
+                values="Jumlah", 
+                title="Distribusi Penyelesaian Tiket"
             )
-            fig_line.update_xaxes(type="category")
-            st.plotly_chart(fig_line)
-    else:
-        st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
+            st.plotly_chart(fig_pie)
+
+    st.subheader("📆 Performa Penyelesaian Tiket Berdasarkan Hari")
+    df_filtered["Created_Day"] = pd.to_datetime(df_filtered["Created"]).dt.day_name()
+    df_daywise = df_filtered.groupby("Created_Day").size().reset_index(name="Jumlah Tiket")
+
+    fig_daywise = px.bar(
+        df_daywise,
+        x="Created_Day",
+        y="Jumlah Tiket",
+        title="Jumlah Tiket Berdasarkan Hari",
+        labels={"Created_Day": "Hari", "Jumlah Tiket": "Jumlah"}
+    )
+    st.plotly_chart(fig_daywise)
 
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
