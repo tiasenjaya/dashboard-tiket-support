@@ -106,19 +106,11 @@ with col_main:
                 "Jumlah": [selesai_hari_h, selesai_setelah_hari_h, belum_selesai]
             })
 
-            color_mapping = {
-                    "Tiket Selesai di Hari H": "#1f77b4",  # Biru
-                    "Tiket Selesai Setelah Hari H": "#ff7f0e",  # Oranye
-                    "Tiket Belum Selesai": "#d62728"  # Merah
-            }
-
             fig_pie = px.pie(
-            df_pie,
-            names="Kategori",
-            values="Jumlah",
-            title="Distribusi Penyelesaian Tiket",
-            color="Kategori",  # Menggunakan warna tetap
-            color_discrete_map=color_mapping  # Tetapkan warna untuk setiap kategori
+                df_pie, 
+                names="Kategori", 
+                values="Jumlah", 
+                title="Distribusi Penyelesaian Tiket"
             )
             st.plotly_chart(fig_pie)
 
