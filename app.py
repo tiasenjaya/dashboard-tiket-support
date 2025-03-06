@@ -53,7 +53,7 @@ if support_filter != "All":
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
 with col_main:
-    st.title(f"📊 Dashboard Tiket SUPPORT")  # Nama Sheet Diganti dengan Fixed Title
+    st.title(f"📊 PERFORMANCE DASHBOARD")  # Nama Sheet Diganti dengan Fixed Title
     
     col1, col2, col3, col4 = st.columns(4)
     
