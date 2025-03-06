@@ -53,7 +53,7 @@ if support_filter != "All":
 col_space, col_main, col_space2 = st.columns([0.2, 1, 0.2])  # Ruang kiri & kanan lebih kecil
 
 with col_main:
-    st.title(f"📊 Dashboard Tiket {selected_sheet}")
+    st.title(f"📊 Dashboard Tiket SUPPORT")  # Nama Sheet Diganti dengan Fixed Title
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -86,32 +86,44 @@ with col_main:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("### 📊 Grafik Bar Chart (Tren Penyelesaian Tiket Per Hari)")
+            st.markdown("### 📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
             fig_bar = px.bar(
                 df_summary,
                 x="Created",
                 y=["Total_Tiket", "Total_Finish"],
                 labels={"value": "Jumlah Tiket", "Created": "Tanggal"},
-                title="Tren Penyelesaian Tiket Per Hari",
+                title="Total Tiket vs Tiket Selesai (Bar Chart)",
                 barmode="group"
             )
             fig_bar.update_xaxes(type="category")
             st.plotly_chart(fig_bar)
 
         with col2:
-            st.markdown("### 🏆 Perbandingan Persentase Penyelesaian Tiket (Pie Chart)")
-            df_pie = pd.DataFrame({
-                "Kategori": ["Tiket Selesai di Hari H", "Tiket Selesai Setelah Hari H", "Tiket Belum Selesai"],
-                "Jumlah": [selesai_hari_h, selesai_setelah_hari_h, belum_selesai]
-            })
+            st.markdown("### 🥇 Perbandingan Persentase Penyelesaian Tiket (Pie Chart)")
+            data_pie = {
+                "Tiket Selesai di Hari H": selesai_hari_h,
+                "Tiket Selesai Setelah Hari H": selesai_setelah_hari_h,
+                "Tiket Belum Selesai": belum_selesai
+            }
+            df_pie = pd.DataFrame(list(data_pie.items()), columns=["Kategori", "Jumlah"])
+
+            color_mapping = {
+                "Tiket Selesai di Hari H": "blue",
+                "Tiket Selesai Setelah Hari H": "lightblue",
+                "Tiket Belum Selesai": "red"
+            }
 
             fig_pie = px.pie(
-                df_pie, 
-                names="Kategori", 
-                values="Jumlah", 
-                title="Distribusi Penyelesaian Tiket"
+                df_pie,
+                names="Kategori",
+                values="Jumlah",
+                title="Distribusi Penyelesaian Tiket",
+                color="Kategori",
+                color_discrete_map=color_mapping
             )
             st.plotly_chart(fig_pie)
+    else:
+        st.warning("⚠️ Tidak ada data yang dapat ditampilkan dalam grafik untuk filter yang dipilih.")
 
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
