@@ -120,7 +120,7 @@ with col_main:
             color="Kategori",  # Menggunakan warna tetap
             color_discrete_map=color_mapping  # Tetapkan warna untuk setiap kategori
             )
-
+            st.plotly_chart(fig_pie)
 
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
