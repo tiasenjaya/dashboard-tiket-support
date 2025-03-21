@@ -226,44 +226,65 @@ if selected_sheet == "CARELINE":
             st.plotly_chart(fig_csat_trend)
 
             # 🏆 3. Top 5 & Bottom 5 Agent Berdasarkan Rata-rata CSAT
-            df_csat_sorted = df_csat_avg.sort_values(by="Rating", ascending=False)
+            # **Pastikan hanya CARELINE dan hanya di tab3 (Data CSAT)**
+if selected_sheet == "CARELINE":
+    with tab3:
 
-            # TOP 5
-            df_top5 = df_csat_sorted.head(5)
-            fig_top5 = px.bar(
-                df_top5,
-                x="Rating",
-                y="Assign To",
-                title="🏆 Top 5 Agent dengan CSAT Tertinggi",
-                labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
-                orientation="h",
-                color="Rating",
-                color_continuous_scale="greens"
-            )
-            st.plotly_chart(fig_top5)
+        # **Cek apakah df_csat_filtered ada datanya**
+        if df_csat_filtered is not None and not df_csat_filtered.empty:
+            
+            # **Pastikan grafik hanya muncul saat Agent yang dipilih adalah "All"**
+            if support_filter == "All":
+                st.subheader("🏆 Top 5 Agent dengan CSAT Tertinggi")
 
-            # BOTTOM 5
-            df_bottom5 = df_csat_sorted.tail(5)
-            fig_bottom5 = px.bar(
-                df_bottom5,
-                x="Rating",
-                y="Assign To",
-                title="⚠️ Bottom 5 Agent dengan CSAT Terendah",
-                labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
-                orientation="h",
-                color="Rating",
-                color_continuous_scale="reds"
-            )
-            st.plotly_chart(fig_bottom5)
+                # **Ambil 5 Agent dengan Rata-rata CSAT Tertinggi**
+                df_top_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nlargest(5).reset_index()
 
-            # 📋 Raw Data CSAT dalam Expander
-            with st.expander("📋 Klik untuk melihat data CSAT yang difilter"):
-                st.dataframe(df_csat_filtered)
+                # **Buat Bar Chart dengan Skala Warna**
+                fig_top_5 = px.bar(
+                    df_top_5,
+                    x="Rating",
+                    y="Assign To",
+                    text="Rating",
+                    orientation="h",
+                    title="Top 5 Agent dengan CSAT Tertinggi",
+                    color="Rating",
+                    color_continuous_scale="greens",
+                    labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"}
+                )
+                fig_top_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
+                fig_top_5.update_layout(xaxis_title="Rata-rata CSAT", yaxis_title="Agent", coloraxis_showscale=True)
+
+                st.plotly_chart(fig_top_5, use_container_width=True)
+
+                # **BOTTOM 5 Agent dengan CSAT Terendah**
+                st.subheader("⚠️ Bottom 5 Agent dengan CSAT Terendah")
+
+                # **Ambil 5 Agent dengan Rata-rata CSAT Terendah**
+                df_bottom_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nsmallest(5).reset_index()
+
+                # **Buat Bar Chart dengan Skala Warna**
+                fig_bottom_5 = px.bar(
+                    df_bottom_5,
+                    x="Rating",
+                    y="Assign To",
+                    text="Rating",
+                    orientation="h",
+                    title="Bottom 5 Agent dengan CSAT Terendah",
+                    color="Rating",
+                    color_continuous_scale="reds",
+                    labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"}
+                )
+                fig_bottom_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
+                fig_bottom_5.update_layout(xaxis_title="Rata-rata CSAT", yaxis_title="Agent", coloraxis_showscale=True)
+
+                st.plotly_chart(fig_bottom_5, use_container_width=True)
+
+            else:
+                st.warning("⚠️ Grafik ini hanya ditampilkan jika Agent yang dipilih adalah 'All'.")
 
         else:
-            st.warning("Tidak ada data CSAT dalam rentang tanggal yang dipilih.")
-
-
+            st.warning("🔍 Tidak ada data CSAT dalam rentang tanggal dan filter yang dipilih.")
 
 
 # **Data Visit hanya untuk Sheet SUPPORT**
