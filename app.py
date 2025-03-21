@@ -60,6 +60,37 @@ if "Created" in df.columns:
 
 if support_filter != "All":
     df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
+	
+# **📌 Jika Sheet CARELINE, Load Sheet CSAT Juga**
+df_csat_filtered = None
+if selected_sheet == "CARELINE":
+    CSAT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=CSAT"
+    df_csat = load_data(CSAT_URL)
+
+    # **Pastikan df_csat tidak kosong sebelum diproses**
+    if not df_csat.empty:
+        # Konversi format tanggal
+        if "Created" in df_csat.columns:
+            df_csat["Created"] = pd.to_datetime(df_csat["Created"], errors='coerce', dayfirst=True).dt.date
+
+        # Pastikan "Assign To" dan "Rating" ada dalam dataset
+        if "Assign To" in df_csat.columns and "Rating" in df_csat.columns:
+            df_csat["Rating"] = pd.to_numeric(df_csat["Rating"], errors="coerce")  # Pastikan angka
+            
+            # **Filter berdasarkan rentang tanggal**
+            df_csat_filtered = df_csat.copy()
+            df_csat_filtered = df_csat_filtered[
+                (df_csat_filtered["Created"] >= date_range[0]) & 
+                (df_csat_filtered["Created"] <= date_range[1])
+            ]
+
+            # **Filter berdasarkan agent jika dipilih**
+            if support_filter != "All":
+                df_csat_filtered = df_csat_filtered[df_csat_filtered["Assign To"] == support_filter]
+
+            # **Agregasi Data CSAT berdasarkan rating**
+            df_csat_summary = df_csat_filtered.groupby(["Assign To", "Rating"]).size().unstack(fill_value=0)
+
 
 # **📌 Jika Sheet SUPPORT, Load Sheet VISIT Juga**
 df_visit_filtered = None
@@ -93,11 +124,14 @@ if df_visit_filtered is not None:
     belum_dikunjungi = len(df_visit_filtered[df_visit_filtered["Status"] != "Visited"])
 
 
-# **🔄 Dashboard Tampilan**
+# **🖥️ Dashboard Tampilan**
 if selected_sheet == "SUPPORT":
     tab1, tab2 = st.tabs(["📋 Data Tiket", "📅 Data Visit"])
+elif selected_sheet == "CARELINE":
+    tab1, tab3 = st.tabs(["📋 Data Tiket", "⭐ Data CSAT"])
 else:
     tab1, = st.tabs(["📋 Data Tiket"])
+
 
 with tab1:
     st.title(f"📊 PERFORMANCE DASHBOARD")
@@ -158,6 +192,77 @@ with tab1:
     # **📋 Data Tiket yang difilter (dengan Expander)**
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
         st.dataframe(df_filtered)
+
+# **Pastikan hanya CARELINE yang menampilkan grafik CSAT**
+if selected_sheet == "CARELINE":
+    with tab3:
+     st.subheader("📊 Analisis CSAT")
+
+    if not df_csat_filtered.empty:
+        # 🎯 1. Rata-rata CSAT per Agent
+        df_csat_avg = df_csat_filtered.groupby("Assign To")["Rating"].mean().reset_index()
+        fig_csat_avg = px.bar(
+            df_csat_avg,
+            x="Assign To",
+            y="Rating",
+            title="📊 Rata-rata Skor CSAT per Agent",
+            labels={"Rating": "Rata-rata CSAT"},
+            color="Rating",
+            color_continuous_scale="blues"
+        )
+        st.plotly_chart(fig_csat_avg)
+
+        # 📈 2. Melihat Tren Naik Turunnya Kepuasan Pelanggan (Line Chart)
+        df_csat_trend = df_csat_filtered.groupby("Created")["Rating"].mean().reset_index()
+        fig_csat_trend = px.line(
+            df_csat_trend,
+            x="Created",
+            y="Rating",
+            title="📈 Tren Kepuasan Pelanggan (Rata-rata CSAT per Hari)",
+            labels={"Created": "Tanggal", "Rating": "Rata-rata CSAT"},
+            markers=True
+        )
+        st.plotly_chart(fig_csat_trend)
+
+        # 🏆 3. Top 5 & Bottom 5 Agent Berdasarkan Rata-rata CSAT
+        df_csat_sorted = df_csat_avg.sort_values(by="Rating", ascending=False)
+
+        # TOP 5
+        df_top5 = df_csat_sorted.head(5)
+        fig_top5 = px.bar(
+            df_top5,
+            x="Rating",
+            y="Assign To",
+            title="🏆 Top 5 Agent dengan CSAT Tertinggi",
+            labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
+            orientation="h",
+            color="Rating",
+            color_continuous_scale="greens"
+        )
+        st.plotly_chart(fig_top5)
+
+        # BOTTOM 5
+        df_bottom5 = df_csat_sorted.tail(5)
+        fig_bottom5 = px.bar(
+            df_bottom5,
+            x="Rating",
+            y="Assign To",
+            title="⚠️ Bottom 5 Agent dengan CSAT Terendah",
+            labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
+            orientation="h",
+            color="Rating",
+            color_continuous_scale="reds"
+        )
+        st.plotly_chart(fig_bottom5)
+
+        # 📋 Raw Data CSAT dalam Expander
+        with st.expander("📋 Klik untuk melihat data CSAT yang difilter"):
+            st.dataframe(df_csat_filtered)
+
+    else:
+        st.warning("Tidak ada data CSAT dalam rentang tanggal yang dipilih.")
+
+
 
 # **Data Visit hanya untuk Sheet SUPPORT**
 if selected_sheet == "SUPPORT":
