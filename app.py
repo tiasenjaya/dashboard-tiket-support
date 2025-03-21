@@ -194,73 +194,75 @@ with tab1:
         st.dataframe(df_filtered)
 
 # **Pastikan hanya CARELINE yang menampilkan grafik CSAT**
+# **Pastikan grafik CSAT hanya muncul di Tab Data CSAT (bukan di Data Tiket)**
 if selected_sheet == "CARELINE":
     with tab3:
-     st.subheader("📊 Analisis CSAT")
+        st.subheader("📊 Analisis CSAT")
 
-    if not df_csat_filtered.empty:
-        # 🎯 1. Rata-rata CSAT per Agent
-        df_csat_avg = df_csat_filtered.groupby("Assign To")["Rating"].mean().reset_index()
-        fig_csat_avg = px.bar(
-            df_csat_avg,
-            x="Assign To",
-            y="Rating",
-            title="📊 Rata-rata Skor CSAT per Agent",
-            labels={"Rating": "Rata-rata CSAT"},
-            color="Rating",
-            color_continuous_scale="blues"
-        )
-        st.plotly_chart(fig_csat_avg)
+        if not df_csat_filtered.empty:
+            # 🎯 1. Rata-rata CSAT per Agent
+            df_csat_avg = df_csat_filtered.groupby("Assign To")["Rating"].mean().reset_index()
+            fig_csat_avg = px.bar(
+                df_csat_avg,
+                x="Assign To",
+                y="Rating",
+                title="📊 Rata-rata Skor CSAT per Agent",
+                labels={"Rating": "Rata-rata CSAT"},
+                color="Rating",
+                color_continuous_scale="blues"
+            )
+            st.plotly_chart(fig_csat_avg)
 
-        # 📈 2. Melihat Tren Naik Turunnya Kepuasan Pelanggan (Line Chart)
-        df_csat_trend = df_csat_filtered.groupby("Created")["Rating"].mean().reset_index()
-        fig_csat_trend = px.line(
-            df_csat_trend,
-            x="Created",
-            y="Rating",
-            title="📈 Tren Kepuasan Pelanggan (Rata-rata CSAT per Hari)",
-            labels={"Created": "Tanggal", "Rating": "Rata-rata CSAT"},
-            markers=True
-        )
-        st.plotly_chart(fig_csat_trend)
+            # 📈 2. Melihat Tren Naik Turunnya Kepuasan Pelanggan (Line Chart)
+            df_csat_trend = df_csat_filtered.groupby("Created")["Rating"].mean().reset_index()
+            fig_csat_trend = px.line(
+                df_csat_trend,
+                x="Created",
+                y="Rating",
+                title="📈 Tren Kepuasan Pelanggan (Rata-rata CSAT per Hari)",
+                labels={"Created": "Tanggal", "Rating": "Rata-rata CSAT"},
+                markers=True
+            )
+            st.plotly_chart(fig_csat_trend)
 
-        # 🏆 3. Top 5 & Bottom 5 Agent Berdasarkan Rata-rata CSAT
-        df_csat_sorted = df_csat_avg.sort_values(by="Rating", ascending=False)
+            # 🏆 3. Top 5 & Bottom 5 Agent Berdasarkan Rata-rata CSAT
+            df_csat_sorted = df_csat_avg.sort_values(by="Rating", ascending=False)
 
-        # TOP 5
-        df_top5 = df_csat_sorted.head(5)
-        fig_top5 = px.bar(
-            df_top5,
-            x="Rating",
-            y="Assign To",
-            title="🏆 Top 5 Agent dengan CSAT Tertinggi",
-            labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
-            orientation="h",
-            color="Rating",
-            color_continuous_scale="greens"
-        )
-        st.plotly_chart(fig_top5)
+            # TOP 5
+            df_top5 = df_csat_sorted.head(5)
+            fig_top5 = px.bar(
+                df_top5,
+                x="Rating",
+                y="Assign To",
+                title="🏆 Top 5 Agent dengan CSAT Tertinggi",
+                labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
+                orientation="h",
+                color="Rating",
+                color_continuous_scale="greens"
+            )
+            st.plotly_chart(fig_top5)
 
-        # BOTTOM 5
-        df_bottom5 = df_csat_sorted.tail(5)
-        fig_bottom5 = px.bar(
-            df_bottom5,
-            x="Rating",
-            y="Assign To",
-            title="⚠️ Bottom 5 Agent dengan CSAT Terendah",
-            labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
-            orientation="h",
-            color="Rating",
-            color_continuous_scale="reds"
-        )
-        st.plotly_chart(fig_bottom5)
+            # BOTTOM 5
+            df_bottom5 = df_csat_sorted.tail(5)
+            fig_bottom5 = px.bar(
+                df_bottom5,
+                x="Rating",
+                y="Assign To",
+                title="⚠️ Bottom 5 Agent dengan CSAT Terendah",
+                labels={"Assign To": "Agent", "Rating": "Rata-rata CSAT"},
+                orientation="h",
+                color="Rating",
+                color_continuous_scale="reds"
+            )
+            st.plotly_chart(fig_bottom5)
 
-        # 📋 Raw Data CSAT dalam Expander
-        with st.expander("📋 Klik untuk melihat data CSAT yang difilter"):
-            st.dataframe(df_csat_filtered)
+            # 📋 Raw Data CSAT dalam Expander
+            with st.expander("📋 Klik untuk melihat data CSAT yang difilter"):
+                st.dataframe(df_csat_filtered)
 
-    else:
-        st.warning("Tidak ada data CSAT dalam rentang tanggal yang dipilih.")
+        else:
+            st.warning("Tidak ada data CSAT dalam rentang tanggal yang dipilih.")
+
 
 
 
