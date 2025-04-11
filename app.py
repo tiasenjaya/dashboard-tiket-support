@@ -50,29 +50,13 @@ min_date = df["Created"].min() if "Created" in df.columns else df["Schedule Date
 max_date = df["Created"].max() if "Created" in df.columns else df["Schedule Date"].max()
 date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
 
-# Tangani kasus jika hanya satu tanggal dipilih
-if isinstance(date_range, (list,tuple)):
-    if len(date_range) == 2:
-        start_date, end_date = date_range
-    elif len(date_range) == 1:
-        start_date = end_date = date_range[0]
-    else:
-        start_date = end_date = None
-else:
-    start_date = end_date = None
-
-if start_date and end_date:
-    start_date = pd.to_datetime(start_date).date()
-    end_date = pd.to_datetime(end_date).date()
-
-
 # **👤 Sidebar - Pilih Support**
 support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + df["Assign To"].dropna().unique().tolist())
 
 # **📌 Filter Data berdasarkan pilihan**
 df_filtered = df.copy()
 if "Created" in df.columns:
-    df_filtered = df_filtered[(df_filtered["Created"] >= start_date) & (df_filtered["Created"] <= end_date)]
+    df_filtered = df_filtered[(df_filtered["Created"] >= date_range[0]) & (df_filtered["Created"] <= date_range[1])]
 
 if support_filter != "All":
     df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
@@ -96,8 +80,8 @@ if selected_sheet == "CARELINE":
             # **Filter berdasarkan rentang tanggal**
             df_csat_filtered = df_csat.copy()
             df_csat_filtered = df_csat_filtered[
-                (df_csat_filtered["Created"] >= start_date) & 
-                (df_csat_filtered["Created"] <= end_date)
+                (df_csat_filtered["Created"] >= date_range[0]) & 
+                (df_csat_filtered["Created"] <= date_range[1])
             ]
 
             # **Filter berdasarkan agent jika dipilih**
@@ -120,51 +104,10 @@ if selected_sheet == "SUPPORT":
         df_visit["Visit Date"] = pd.to_datetime(df_visit["Visit Date"], errors='coerce', dayfirst=True).dt.date
     
     df_visit_filtered = df_visit.copy()
-    df_visit_filtered = df_visit_filtered[(df_visit_filtered["Schedule Date"] >= start_date) & (df_visit_filtered["Schedule Date"] <= end_date)]
+    df_visit_filtered = df_visit_filtered[(df_visit_filtered["Schedule Date"] >= date_range[0]) & (df_visit_filtered["Schedule Date"] <= date_range[1])]
 
     if support_filter != "All":
         df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"] == support_filter]
-		
-# 📄 Load Data SUPPORT_ACTIVITY
-    ACTIVITY_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=SUPPORT_ACTIVITY"
-    df_efftime = load_data(ACTIVITY_URL)
-	
-	# Tambahkan kolom Status untuk menandai jika Check In / Check Out kosong
-    df_efftime["Status"] = df_efftime.apply(
-    lambda row: "Missing Check In/Out" if pd.isna(row.get("Check In")) or pd.isna(row.get("Check Out")) else "OK",
-    axis=1
-    )
-
-    # Format kolom datetime dan duration
-    if "Schedule Date" in df_efftime.columns:
-        df_efftime["Schedule Date"] = pd.to_datetime(df_efftime["Schedule Date"], errors='coerce', dayfirst=True).dt.date
-		
-    if "Duration" in df_efftime.columns:
-        df_efftime["Duration"] = pd.to_timedelta(df_efftime["Duration"], errors='coerce')
-		
-    if "Un-effective Time" in df_efftime.columns:
-        df_efftime["Un-effective Time"] = pd.to_timedelta(df_efftime["Un-effective Time"], errors='coerce')
-
-		
-	# ✅ Tambahkan kolom Status berdasarkan Check In / Check Out
-    df_efftime["Status"] = df_efftime.apply(
-        lambda row: "Missing" if pd.isna(row["Check In"]) or pd.isna(row["Check Out"]) else "OK",
-        axis=1
-    )
-
-    # Hitung kolom 'Un-effective Time'
-    standard_duration = pd.to_timedelta("9:00:00")
-    df_efftime["Un-effective Time"] = standard_duration - df_efftime["Duration"]
-
-    # Filter berdasarkan tanggal dan support_filter
-    df_efftime_filtered = df_efftime.copy()
-    df_efftime_filtered = df_efftime_filtered[
-        (df_efftime_filtered["Schedule Date"] >= start_date) &
-        (df_efftime_filtered["Schedule Date"] <= end_date)
-    ]
-    if support_filter != "All":
-        df_efftime_filtered = df_efftime_filtered[df_efftime_filtered["Assign To"] == support_filter]
-
 
 # **📌 Hitung Metrik Tiket**
 total_tiket = len(df_filtered) if df_filtered is not None else 0
@@ -183,7 +126,7 @@ if df_visit_filtered is not None:
 
 # **🖥️ Dashboard Tampilan**
 if selected_sheet == "SUPPORT":
-    tab1, tab2, tab4 = st.tabs(["📄 Data Tiket", "📅 Data Visit", "⏱️ Activity"])
+    tab1, tab2 = st.tabs(["📋 Data Tiket", "📅 Data Visit"])
 elif selected_sheet == "CARELINE":
     tab1, tab3 = st.tabs(["📋 Data Tiket", "⭐ Data CSAT"])
 else:
@@ -363,97 +306,6 @@ if selected_sheet == "SUPPORT":
 
         with st.expander("📅 Klik untuk melihat data visit yang difilter"):
             st.dataframe(df_visit_filtered)
-			
-with tab4:
-    st.title("⏱️ Effective vs Un-effective Time")
-
-    if not df_efftime_filtered.empty:
-        # Backup semua data (OK + non-OK) untuk ditampilkan di tabel
-        df_all_for_display = df_efftime_filtered.copy()
-
-        # Filter hanya yang status OK untuk perhitungan
-        df_valid = df_efftime_filtered[df_efftime_filtered["Status"] == "OK"]
-
-        # Filter berdasarkan agent jika bukan "All"
-        if support_filter != "All":
-            df_valid = df_valid[df_valid["Assign To"] == support_filter]
-            df_all_for_display = df_all_for_display[df_all_for_display["Assign To"] == support_filter]
-
-        # Cek apakah ada data OK
-        if not df_valid.empty:
-			
-			#Checkbox memunculkan nilai negatif
-            show_negative = st.checkbox("Tampilkan nilai negatif un-effective time", value=False)
-			
-            # Konversi tipe data datetime dan timedelta
-            df_valid["Schedule Date"] = pd.to_datetime(df_valid["Schedule Date"], errors='coerce').dt.date
-            df_valid["Duration"] = pd.to_timedelta(df_valid["Duration"], errors='coerce')
-
-            # Total hari kerja unik
-            total_days = df_valid["Schedule Date"].nunique()
-
-            # Standar kerja per hari (misal 9 jam)
-            standard_duration = 9
-
-            # Hitung total duration actual dari kolom
-            total_duration = df_valid["Duration"].sum()
-            total_eff_hours = total_duration.total_seconds() / 3600
-
-            # Hitung durasi kerja sesuai standar (9 jam per hari)
-            total_duration_hours = total_days * standard_duration
-
-            # Un-effective = selisih dari jam kerja harian
-            total_un_eff_hours = total_duration_hours - total_eff_hours
-
-            # Opsi checkbox untuk nilai negatif
-            if not show_negative:
-                total_un_eff_hours = max(0, total_un_eff_hours) #sembunyikan nilai negatif
-
-            # Tampilkan metrik
-            col1, col2, col3 = st.columns(3)
-            col1.metric("📅 Durasi Kerja", f"{total_days} Hari")
-            col2.metric("✅ Effective Time", f"{total_eff_hours:.2f} Jam")
-            col3.metric("⏳ Un-effective Time", f"{total_un_eff_hours:.2f} Jam")
-
-            # Markdown simulasi
-            st.markdown("### 🔍 Simulasi Berdasarkan Status = 'OK'")
-            st.markdown(f"""
-            - **Durasi Kerja (Hari)**: `{total_days}`
-            - ✅ **Total Duration (Jam)**: `{total_eff_hours:.2f}` `(Standar kerja: 9 jam/hari)`
-            - ✅ **Total Effective Time (Jam)**: `{total_eff_hours:.2f}` `(Dihitung berdasarkan lama pengerjaan di Outlet)`
-            - ⏳ **Total Un-effective Time (Jam)**: `{total_un_eff_hours:.2f}` `(Jam Kerja dikurangi Effective Time)`
-            """)
-
-            # Tampilkan seluruh data (OK + non-OK)
-            st.markdown("### 🧾 Klik untuk melihat data aktivitas detail:")
-            def highlight_non_ok(row):
-                color = 'background-color: #ffe6e6' if row["Status"] != "OK" else ''
-                return [color]*len(row)
-				
-            def format_timedelta(td):
-                if pd.isna(td):
-                     return "-"
-                total_seconds = td.total_seconds()
-                hours = int(total_seconds // 3600)
-                minutes = int((total_seconds % 3600) // 60)
-                return f"{hours} jam {minutes} menit"
-
-            # Format tampilan kolom timedelta
-            df_all_for_display["Duration"] = pd.to_timedelta(df_all_for_display["Duration"], errors="coerce")
-            df_all_for_display["Un-effective Time"] = pd.to_timedelta(df_all_for_display["Un-effective Time"], errors="coerce")
-            df_all_for_display["Duration"] = df_all_for_display["Duration"].apply(format_timedelta)
-            df_all_for_display["Un-effective Time"] = df_all_for_display["Un-effective Time"].apply(format_timedelta)
-
-            styled_table = df_all_for_display.style.apply(highlight_non_ok, axis=1)
-
-            with st.expander("📄 Klik untuk melihat data aktivitas detail"):
-                st.dataframe(styled_table)
-
-        else:
-            st.warning("Tidak ada data aktivitas dengan status **OK** pada rentang tanggal & agent yang dipilih.")
-    else:
-        st.warning("Data kosong setelah difilter. Coba sesuaikan rentang tanggal atau sheet.")
-
 			
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
