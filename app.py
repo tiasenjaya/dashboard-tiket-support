@@ -1,3 +1,37 @@
+# === FUNGSI MODULAR ===
+
+def load_data(url):
+    df = pd.read_csv(url)
+    df.rename(columns=lambda x: x.strip(), inplace=True)
+    return df
+
+
+def filter_data(df, start_date, end_date, agent_filter, service_filter=None):
+    df_filtered = df.copy()
+    if start_date and end_date:
+        if "Created" in df_filtered.columns:
+            df_filtered = df_filtered[
+                (df_filtered["Created"] >= start_date) &
+                (df_filtered["Created"] <= end_date)
+            ]
+    if agent_filter != "All":
+        df_filtered = df_filtered[df_filtered["Assign To"] == agent_filter]
+    if service_filter and service_filter != "All":
+        if "Services" in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered["Services"] == service_filter]
+    return df_filtered
+
+
+def calculate_ticket_metrics(df_filtered):
+    total_tiket = len(df_filtered)
+    selesai_hari_h = len(df_filtered[df_filtered["Created"] == df_filtered["Finish"]])
+    selesai_setelah_hari_h = len(df_filtered[df_filtered["Created"] < df_filtered["Finish"]])
+    belum_selesai = len(df_filtered[df_filtered["Status"] != "Finish"]) if "Status" in df_filtered.columns else 0
+    avg_durasi = df_filtered["Durasi (Jam)"].mean() if "Durasi (Jam)" in df_filtered.columns else None
+    return total_tiket, selesai_hari_h, selesai_setelah_hari_h, belum_selesai, avg_durasi
+
+
+# === KODE UTAMA ===
 import streamlit as st
 import pandas as pd
 import plotly.express as px
