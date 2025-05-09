@@ -161,8 +161,8 @@ def render_tab_visit(df_visit_filtered):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("✅ Total Visit", total_visit)
     col2.metric("❌ Not Visited", not_visited)
-    col3.metric("📅 Visit Hari H", selesai_hari_h_visit)
-    col4.metric("🕒 Visit > Hari H", selesai_setelah_hari_h_visit)
+    col3.metric("📅 Finish Form Visit = Hari H", selesai_hari_h_visit)
+    col4.metric("🕒 Finish Form Visit > Hari H", selesai_setelah_hari_h_visit)
 
     st.subheader("📈 Grafik Visit Hari H")
     # Filter hanya data yang visited
