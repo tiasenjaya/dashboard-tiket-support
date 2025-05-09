@@ -5,7 +5,6 @@ def load_data(url):
     df.rename(columns=lambda x: x.strip(), inplace=True)
     return df
 
-
 def filter_data(df, start_date, end_date, agent_filter, service_filter=None):
     df_filtered = df.copy()
     if start_date and end_date:
@@ -21,14 +20,370 @@ def filter_data(df, start_date, end_date, agent_filter, service_filter=None):
             df_filtered = df_filtered[df_filtered["Services"] == service_filter]
     return df_filtered
 
-
 def calculate_ticket_metrics(df_filtered):
     total_tiket = len(df_filtered)
-    selesai_hari_h = len(df_filtered[df_filtered["Created"] == df_filtered["Finish"]])
-    selesai_setelah_hari_h = len(df_filtered[df_filtered["Created"] < df_filtered["Finish"]])
+    selesai_24_jam = len(df_filtered[df_filtered["Durasi (Jam)"] <= 24])
+    selesai_lebih_24_jam = len(df_filtered[df_filtered["Durasi (Jam)"] > 24])
     belum_selesai = len(df_filtered[df_filtered["Status"] != "Finish"]) if "Status" in df_filtered.columns else 0
     avg_durasi = df_filtered["Durasi (Jam)"].mean() if "Durasi (Jam)" in df_filtered.columns else None
-    return total_tiket, selesai_hari_h, selesai_setelah_hari_h, belum_selesai, avg_durasi
+    return total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi
+
+def calculate_visit_metrics(df_visit_filtered):
+    total_visit = len(df_visit_filtered)
+    selesai_hari_h = len(df_visit_filtered[df_visit_filtered["Schedule Date"] == df_visit_filtered["Visit Date"]])
+    selesai_setelah_hari_h = len(df_visit_filtered[df_visit_filtered["Schedule Date"] < df_visit_filtered["Visit Date"]])
+    belum_dikunjungi = len(df_visit_filtered[df_visit_filtered["Status"] != "Visited"]) if "Status" in df_visit_filtered.columns else 0
+    return total_visit, selesai_hari_h, selesai_setelah_hari_h, belum_dikunjungi
+
+def calculate_efftime_metrics(df_efftime_filtered, support_filter):
+    df_valid = df_efftime_filtered[df_efftime_filtered["Status"] == "OK"].copy()
+
+    if support_filter != "All":
+        df_valid = df_valid[df_valid["Assign To"] == support_filter]
+
+    total_days, total_eff_hours, total_un_eff_hours = calculate_efftime_metrics(df_efftime_filtered, support_filter)
+
+def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi):
+    st.title("📊 PERFORMANCE DASHBOARD")
+    st.subheader("📌 Performa Penyelesaian Tiket")
+    layanan = st.radio("⚙️ Pilih Jenis Services:", options=service_options, key="layanan")
+
+    progress = total_tiket - belum_selesai
+    progress_percentage = (progress / total_tiket) * 100 if total_tiket > 0 else 0
+    st.progress(progress_percentage / 100)
+    st.success(f"✅ **{progress_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🎟️ Total Tiket", total_tiket)
+    col2.metric("✅ Tiket Selesai ≤ 24 Jam", selesai_24_jam)
+    col3.metric("📋 Tiket Selesai > 24 Jam", selesai_lebih_24_jam)
+    col4.metric("⏳ Tiket Belum Selesai", belum_selesai)
+
+    if avg_durasi:
+        st.metric("🕒 Rata-rata Durasi Pengerjaan", f"{avg_durasi:.2f} Jam")
+
+    st.subheader("📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
+    if not df_filtered.empty:
+        # Step 1: Pastikan kolom Created sudah datetime
+        df_filtered["Created"] = pd.to_datetime(df_filtered["Created"], errors="coerce")
+
+        # Step 2: Buat kolom hanya tanggal saja untuk grouping
+        df_filtered["Created_Date"] = df_filtered["Created"].dt.date  # ← penting!
+
+        # Step 3: Group by Created_Date (bukan Created full datetime)
+        df_summary = df_filtered.groupby("Created_Date").agg(
+            Total_Tiket=("Created", "count"),
+            Selesai_24_Jam=("Durasi (Jam)", lambda x: (x <= 24).sum())).reset_index()
+            
+        # Konversi ulang Created_Date agar bisa pakai .dt
+        df_summary["Created_Date"] = pd.to_datetime(df_summary["Created_Date"], errors="coerce")
+
+        # Format string
+        df_summary["Created Display"] = df_summary["Created_Date"].dt.strftime("%Y-%m-%d")
+       
+        fig_bar = px.bar(
+            df_summary,
+            x="Created Display",
+            y=["Total_Tiket", "Selesai_24_Jam"],
+            color_discrete_sequence=get_default_colors(),
+            barmode="group",
+            labels={"Created": "Tanggal", "value": "Jumlah Tiket"},
+            title="Total Tiket vs Tiket Selesai ≤ 24 Jam (Bar Chart)")
+        # Penting! ubah x-axis ke mode kategori agar tanggal kosong disembunyikan
+        fig_bar.update_xaxes(type="category", tickangle=45)
+        st.plotly_chart(fig_bar)
+
+    st.subheader("🥇 Distribusi Penyelesaian Tiket (Pie Chart)")
+    colors = get_default_colors()
+    labels = ["Tiket ≤ 24 Jam", "Tiket > 24 Jam"]
+    values = [selesai_24_jam, selesai_lebih_24_jam]
+
+    fig_pie = go.Figure(data=[go.Pie(
+        labels=labels, 
+        values=values, 
+        hole=0.4,
+        textinfo="percent+label",
+        marker=dict(colors=colors[:2])
+    )])
+
+    fig_pie.update_layout(
+        title_text="Distribusi Tiket Bedasarkan Durasi Penyelesaian",
+        annotations=[dict(text=f"{total_tiket} Tiket", x=0.5, y=0.5, font_size=16, showarrow=False)]
+    )
+
+    st.plotly_chart(fig_pie)
+
+    with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
+        df_display = df_filtered.copy()
+        def format_durasi(jam_float):
+            if pd.isnull(jam_float):
+                return "-"
+            total_detik = int(jam_float * 3600)
+            jam = total_detik // 3600
+            menit = (total_detik % 3600) // 60
+            detik = total_detik % 60
+            return f"{jam} Jam {menit} Menit {detik} Detik"
+
+        df_display["Durasi (Jam)"] = df_display["Durasi (Jam)"].apply(format_durasi)
+        display_columns = [
+            "Ticket Number", "Created", "Finish", "Assign To", 
+            "Services", "Status", "Durasi (Jam)"]
+        available_cols = [col for col in display_columns if col in df_display.columns]
+        st.dataframe(df_display[available_cols])
+
+def render_tab_visit(df_visit_filtered):
+    st.title("📋 PERFORMANCE DASHBOARD")
+    st.subheader("📊 Grafik Visit Per Hari")
+
+    # Konversi kolom tanggal ke datetime
+    df_visit_filtered["Schedule Date"] = pd.to_datetime(df_visit_filtered["Schedule Date"], errors='coerce')
+    df_visit_filtered["Visit Date"] = pd.to_datetime(df_visit_filtered["Visit Date"], errors='coerce')
+
+    # Pilih Visit Type (selectbox)
+    visit_types = df_visit_filtered["Visit Type"].dropna().unique().tolist()
+    visit_types.sort()
+    visit_types.insert(0, "All")
+    visit_type_selected = st.selectbox("📌 Pilih Visit Type (Selectbox)", options=visit_types)
+
+    if visit_type_selected != "All":
+        df_visit_filtered = df_visit_filtered[df_visit_filtered["Visit Type"] == visit_type_selected]
+
+    # Hitung durasi pengerjaan
+    df_visit_filtered["Durasi (Jam)"] = (df_visit_filtered["Visit Date"] - df_visit_filtered["Schedule Date"]).dt.total_seconds() / 3600
+
+    # Hitung metrik
+    total_visit = df_visit_filtered[df_visit_filtered["Status"] == "Visited"].shape[0]
+    not_visited = df_visit_filtered[df_visit_filtered["Status"] == "Not Visited"].shape[0]
+    selesai_hari_h_visit = df_visit_filtered[(df_visit_filtered["Status"] == "Visited") & (df_visit_filtered["Durasi (Jam)"] <= 24)].shape[0]
+    selesai_setelah_hari_h_visit = df_visit_filtered[(df_visit_filtered["Status"] == "Visited") & (df_visit_filtered["Durasi (Jam)"] > 24)].shape[0]
+
+    # Tampilkan metrik
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("✅ Total Visit", total_visit)
+    col2.metric("❌ Not Visited", not_visited)
+    col3.metric("📅 Visit Hari H", selesai_hari_h_visit)
+    col4.metric("🕒 Visit > Hari H", selesai_setelah_hari_h_visit)
+
+    st.subheader("📈 Grafik Visit Hari H")
+    # Filter hanya data yang visited
+    df_visited_only = df_visit_filtered[df_visit_filtered["Status"] == "Visited"]
+    df_visited_only["Schedule_Date_Hari"] = df_visited_only["Schedule Date"].dt.date
+
+    if not df_visited_only.empty:
+        # Grouping grafik
+        df_summary_visit = df_visited_only.groupby("Schedule_Date_Hari").agg({
+            "Visit Date": "count",
+            "Durasi (Jam)": lambda x: (x <= 24).sum()
+        }).reset_index()
+
+        df_summary_visit["Schedule_Date_Display"] = pd.to_datetime(df_summary_visit["Schedule_Date_Hari"]).dt.strftime("%Y-%m-%d")
+        df_summary_visit.rename(columns={"Visit Date": "Total_Visit", "Durasi (Jam)": "Finish_Hari_H"}, inplace=True)
+
+        fig_visit = px.bar(
+            df_summary_visit,
+            x="Schedule_Date_Display",
+            y=["Total_Visit", "Finish_Hari_H"],
+            barmode="group",
+            color_discrete_sequence=px.colors.qualitative.Set2[:2],
+            title="Total Visit vs Visit Selesai Hari H",
+            labels={"value": "Jumlah Visit", "variable": "Kategori"}
+        )
+        fig_visit.update_xaxes(type="category", tickangle=45)
+        st.plotly_chart(fig_visit)
+
+    # Pie Chart
+    st.subheader("🟠 Distribusi Penyelesaian Visit")
+
+    labels = ["Visit Selesai Hari H", "Visit Selesai Setelah Hari H", "Belum Menyelesaikan Form Visit"]
+    values = [selesai_hari_h_visit, selesai_setelah_hari_h_visit, not_visited]
+
+    colors = px.colors.qualitative.Set2
+
+    fig_pie = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.4,
+        textinfo="percent+label",
+        marker=dict(colors=colors)
+    )])
+
+    fig_pie.update_layout(
+        title_text="Distribusi Visit Berdasarkan Hari Pengisian",
+        annotations=[dict(text=str(total_visit + not_visited), x=0.5, y=0.5, font_size=16, showarrow=False)]
+    )
+    st.plotly_chart(fig_pie)
+
+    # Tabel data
+    st.subheader("📋 Data Visit")
+    display_columns = ["Schedule Date", "Visit Date", "Assign To", "Visit Type", "Status", "Durasi (Jam)"]
+
+    with st.expander("Klik untuk melihat data visit yang difilter"):
+        st.dataframe(df_visit_filtered[display_columns])
+
+def render_tab_csat(df_csat_filtered, support_filter):
+    st.title("📊 PERFORMANCE DASHBOARD")
+    st.subheader("📊 Analisis CSAT")
+
+    if df_csat_filtered is not None and not df_csat_filtered.empty:
+        df_csat_avg = df_csat_filtered.groupby("Assign To")["Rating"].mean().reset_index()
+        fig_csat_avg = px.bar(
+            df_csat_avg,
+            x="Assign To",
+            y="Rating",
+            title="📊 Rata-rata Skor CSAT per Agent",
+            labels={"Rating": "Rata-rata CSAT"},
+            color="Rating",
+            color_continuous_scale="blues"
+        )
+        st.plotly_chart(fig_csat_avg)
+
+        df_csat_trend = df_csat_filtered.groupby("Created")["Rating"].mean().reset_index()
+        fig_csat_trend = px.line(
+            df_csat_trend,
+            x="Created",
+            y="Rating",
+            title="📈 Tren Kepuasan Pelanggan (Rata-rata CSAT per Hari)",
+            labels={"Created": "Tanggal", "Rating": "Rata-rata CSAT"},
+            markers=True
+        )
+        st.plotly_chart(fig_csat_trend)
+
+        st.markdown("----")
+        if support_filter == "All":
+            st.subheader("🏆 Top 5 Agent dengan CSAT Tertinggi")
+            df_top_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nlargest(5).reset_index()
+            fig_top_5 = px.bar(
+                df_top_5,
+                x="Rating",
+                y="Assign To",
+                text="Rating",
+                orientation="h",
+                title="Top 5 Agent dengan CSAT Tertinggi",
+                color="Rating",
+                color_continuous_scale="greens",
+                labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"},
+                category_orders={"Assign To": df_top_5.sort_values("Rating", ascending=False)["Assign To"]}
+            )
+
+            fig_top_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
+            st.plotly_chart(fig_top_5, use_container_width=True)
+
+            st.subheader("⚠️ Bottom 5 Agent dengan CSAT Terendah")
+            df_bottom_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nsmallest(5).reset_index()
+            fig_bottom_5 = px.bar(
+                df_bottom_5,
+                x="Rating",
+                y="Assign To",
+                text="Rating",
+                orientation="h",
+                title="Bottom 5 Agent dengan CSAT Terendah",
+                color="Rating",
+                color_continuous_scale="reds",
+                labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"},
+                category_orders={"Assign To": df_bottom_5.sort_values("Rating", ascending=False)["Assign To"]}
+            )
+            fig_bottom_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
+            st.plotly_chart(fig_bottom_5, use_container_width=True)
+        else:
+            st.warning("⚠️ Grafik ini hanya ditampilkan jika Agent yang dipilih adalah 'All'.")
+    else:
+        st.warning("🔍 Tidak ada data CSAT dalam rentang tanggal dan filter yang dipilih.")
+
+def render_tab_activity(df_efftime_filtered, support_filter):
+    st.title("⏱️ Effective vs Un-effective Time")
+
+    if df_efftime_filtered is not None and not df_efftime_filtered.empty:
+        df_all_for_display = df_efftime_filtered.copy()
+        df_valid = df_efftime_filtered[df_efftime_filtered["Status"] == "OK"].copy()
+
+        if support_filter != "All":
+            df_valid = df_valid[df_valid["Assign To"] == support_filter]
+            df_all_for_display = df_all_for_display[df_all_for_display["Assign To"] == support_filter]
+
+        if not df_valid.empty:
+            show_negative = st.checkbox("Tampilkan nilai negatif un-effective time", value=False)
+
+            # Perhitungan / pemrosesan nilai negatif
+            df_efftime_filtered["Un-effective Time"] = df_efftime_filtered["Un-effective Time"].apply(
+                lambda x: x if show_negative else max(x,timedelta(0))
+            )
+
+            df_valid["Schedule Date"] = pd.to_datetime(df_valid["Schedule Date"], errors='coerce').dt.date
+            df_valid["Duration"] = pd.to_timedelta(df_valid["Duration"], errors='coerce')
+
+            total_days = df_valid["Schedule Date"].nunique()
+            standard_duration = 9
+            total_duration = df_valid["Duration"].sum()
+            total_eff_hours = total_duration.total_seconds() / 3600 if pd.notnull(total_duration) else 0
+            total_duration_hours = total_days * standard_duration
+            total_un_eff_hours = total_duration_hours - total_eff_hours
+            if not show_negative:
+                total_un_eff_hours = max(0, total_un_eff_hours)
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("📅 Durasi Kerja", f"{total_days} Hari")
+            col2.metric("✅ Effective Time", f"{total_eff_hours:.2f} Jam")
+            col3.metric("⏳ Un-effective Time", f"{total_un_eff_hours:.2f} Jam")
+
+            st.markdown("### 🔍 Simulasi Berdasarkan Status = 'OK'")
+            st.markdown(f"""
+            - **Durasi Kerja (Hari)**: `{total_days}`
+            - ✅ **Total Duration (Jam)**: `{total_eff_hours:.2f}` `(Standar kerja: 9 jam/hari)`
+            - ✅ **Total Effective Time (Jam)**: `{total_eff_hours:.2f}` `(Dihitung berdasarkan lama pengerjaan di Outlet)`
+            - ⏳ **Total Un-effective Time (Jam)**: `{total_un_eff_hours:.2f}` `(Jam Kerja dikurangi Effective Time)`
+            """)
+
+            st.markdown("### 🧾 Klik untuk melihat data aktivitas detail:")
+
+            def highlight_non_ok(row):
+                color = 'background-color: #ffe6e6' if row["Status"] != "OK" else ''
+                return [color]*len(row)
+
+            def format_timedelta(td):
+                if pd.isna(td):
+                    return "-"
+                total_seconds = td.total_seconds()
+                hours = int(total_seconds // 3600)
+                minutes = int((total_seconds % 3600) // 60)
+                return f"{hours} jam {minutes} menit"
+
+            df_all_for_display["Duration"] = pd.to_timedelta(df_all_for_display["Duration"], errors="coerce")
+            df_all_for_display["Un-effective Time"] = pd.to_timedelta(df_all_for_display["Un-effective Time"], errors="coerce")
+            df_all_for_display["Duration"] = df_all_for_display["Duration"].apply(format_timedelta)
+            df_all_for_display["Un-effective Time"] = df_all_for_display["Un-effective Time"].apply(format_timedelta)
+
+            styled_table = df_all_for_display.style.apply(highlight_non_ok, axis=1)
+            with st.expander("📄 Klik untuk melihat data aktivitas detail"):
+                st.dataframe(styled_table)
+
+        else:
+            st.warning("Tidak ada data aktivitas dengan status **OK** pada rentang tanggal & agent yang dipilih.")
+    else:
+        st.warning("Data kosong setelah difilter. Coba sesuaikan rentang tanggal atau sheet.")
+
+def render_tabs(tabs, tab_labels, selected_sheet, df_filtered, df_visit_filtered, df_csat_filtered, df_efftime_filtered, layanan, service_options, support_filter):
+    for i, tab in enumerate(tabs):
+        with tab:
+            tab_label = tab_labels[i]
+
+            if st.session_state.active_tab != tab_label:
+                st.session_state.active_tab = tab_label
+
+            if st.session_state.active_tab == tab_label:
+                if tab_label == "📄 Data Tiket":
+                    total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi = calculate_ticket_metrics(df_filtered)
+                    render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi)
+
+                elif tab_label == "🗓️ Data Visit" and selected_sheet == "SUPPORT":
+                    if df_visit_filtered is not None:
+                        total_visit, selesai_hari_h_visit, selesai_setelah_hari_h_visit, belum_dikunjungi = calculate_visit_metrics(df_visit_filtered)
+                        render_tab_visit(df_visit_filtered)
+
+                elif tab_label == "⭐ Data CSAT" and selected_sheet == "CARELINE":
+                    render_tab_csat(df_csat_filtered, support_filter)
+
+                elif tab_label == "⏱️ Activity" and selected_sheet == "SUPPORT":
+                    render_tab_activity(df_efftime_filtered, support_filter)
 
 
 # === KODE UTAMA ===
@@ -37,6 +392,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime
+from datetime import timedelta
+
+# 🎨 Palet Warna Kontras untuk Konsistensi Visual
+def get_default_colors():
+    return ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
 # **📄 Konfigurasi Layout**
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
@@ -68,35 +428,23 @@ def load_data(url):
 
 df = load_data(CSV_URL)
 
-# Konversi Created dan Finish ke datetime (jam termasuk)
+# Format dan Konversi
+if "Ticket Number" in df.columns:
+    df["Ticket Number"] = df["Ticket Number"].astype(str)
+
 if "Created" in df.columns:
     df["Created"] = pd.to_datetime(df["Created"], errors='coerce', dayfirst=True)
+    df["Created Display"] = df["Created"].dt.strftime("%d/%m/%Y %H:%M:%S")
+    df["Created_Date"] = df["Created"].dt.date  # <-- Tambahkan ini
 
 if "Finish" in df.columns:
     df["Finish"] = pd.to_datetime(df["Finish"], errors='coerce', dayfirst=True)
+    df["Finish Display"] = df["Finish"].dt.strftime("%d/%m/%Y %H:%M:%S")
 
-# Hitung durasi pengerjaan dalam satuan jam
+# Durasi
 if "Created" in df.columns and "Finish" in df.columns:
     df["Durasi (Jam)"] = (df["Finish"] - df["Created"]).dt.total_seconds() / 3600
-
-
-# **📌 Format Data**
-if "Ticket Number" in df.columns:
-    df["Ticket Number"] = df["Ticket Number"].astype(str)
-if "Created" in df.columns:
-    df["Created"] = pd.to_datetime(df["Created"], errors='coerce', dayfirst=True).dt.date
-if "Finish" in df.columns:
-    df["Finish"] = pd.to_datetime(df["Finish"], errors='coerce', dayfirst=True).dt.date
-if "Schedule Date" in df.columns:
-    df["Schedule Date"] = pd.to_datetime(df["Schedule Date"], errors='coerce', dayfirst=True).dt.date
-if "Visit Date" in df.columns:
-    df["Visit Date"] = pd.to_datetime(df["Visit Date"], errors='coerce', dayfirst=True).dt.date
-
-# Pastikan kolom tanggal benar-benar datetime
-if "Created" in df.columns:
-    df["Created"] = pd.to_datetime(df["Created"], errors="coerce", dayfirst=True)
-if "Schedule Date" in df.columns:
-    df["Schedule Date"] = pd.to_datetime(df["Schedule Date"], errors="coerce", dayfirst=True)   
+  
 
 # **📊 Sidebar - Pilih Rentang Tanggal**
 min_date = df["Created"].min() if "Created" in df.columns else df["Schedule Date"].min()
@@ -124,7 +472,9 @@ if start_date and end_date:
 
 
 # **👤 Sidebar - Pilih Support**
-support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + df["Assign To"].dropna().unique().tolist())
+support_options = sorted(df["Assign To"].dropna().unique().tolist())
+support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + support_options)
+
 
 # **📌 Filter Data berdasarkan pilihan**
 # Inisialisasi df_filtered
@@ -205,7 +555,7 @@ if selected_sheet == "SUPPORT":
     # Konversi nilai date_input ke datetime64 agar cocok dengan kolom Schedule Date
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date = pd.to_datetime(date_range[0])
-        end_date = pd.to_datetime(date_range[1])
+        end_date = pd.to_datetime(date_range[1]).replace(hour=23, minute=59, second=59)
 
         df_filtered = df_filtered[
             (df_filtered["Created"] >= start_date) &
@@ -216,7 +566,8 @@ if selected_sheet == "SUPPORT":
 
     if support_filter != "All":
         df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"] == support_filter]
-		
+
+df_efftime_filtered = None		
 # 📄 Load Data SUPPORT_ACTIVITY
 if selected_sheet == "SUPPORT":
     ACTIVITY_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=SUPPORT_ACTIVITY"
@@ -277,23 +628,6 @@ layanan = st.session_state.get("layanan", "All")
 if layanan != "All":
     df_filtered = df_filtered[df_filtered["Services"] == layanan]
 
-
-
-# **📌 Hitung Metrik Tiket**
-total_tiket = len(df_filtered) if df_filtered is not None else 0
-selesai_hari_h = len(df_filtered[df_filtered["Created"] == df_filtered["Finish"]]) if df_filtered is not None else 0
-selesai_setelah_hari_h = len(df_filtered[df_filtered["Created"] < df_filtered["Finish"]]) if df_filtered is not None else 0
-belum_selesai = len(df_filtered[df_filtered["Status"] != "Finish"]) if df_filtered is not None else 0
-
-# **📌 Hitung Metrik Visit (Hanya untuk SUPPORT)**
-total_visit, selesai_hari_h_visit, selesai_setelah_hari_h_visit, belum_dikunjungi = 0, 0, 0, 0
-if df_visit_filtered is not None:
-    total_visit = len(df_visit_filtered)
-    selesai_hari_h_visit = len(df_visit_filtered[df_visit_filtered["Schedule Date"] == df_visit_filtered["Visit Date"]])
-    selesai_setelah_hari_h_visit = len(df_visit_filtered[df_visit_filtered["Schedule Date"] < df_visit_filtered["Visit Date"]])
-    belum_dikunjungi = len(df_visit_filtered[df_visit_filtered["Status"] != "Visited"])
-
-
 # **🖥️ Dashboard Tampilan**
 if selected_sheet == "SUPPORT":
     tab_labels = ["📄 Data Tiket", "🗓️ Data Visit", "⏱️ Activity"]
@@ -324,275 +658,7 @@ if st.session_state.last_filter != current_filter:
 
 tabs = st.tabs(tab_labels)
 
-for i, tab in enumerate(tabs):
-        with tab:
-            tab_label = tab_labels[i]
-
-            if st.session_state.active_tab != tab_label:
-                st.session_state.active_tab = tab_label
-
-            if st.session_state.active_tab == tab_label:
-                if tab_label== "📄 Data Tiket":
-                        st.title("📊 PERFORMANCE DASHBOARD")
-                        st.subheader("📌 Performa Penyelesaian Tiket")
-
-                        # ✅ Tambahkan ini DI DALAM `with tab1:`
-                        layanan = st.radio("⚙️ Pilih Jenis Services:",options=service_options,key="layanan")
-
-                        progress = selesai_hari_h + selesai_setelah_hari_h
-                        progress_percentage = (progress / total_tiket) * 100 if total_tiket > 0 else 0
-
-                        st.progress(progress_percentage / 100)
-                        st.success(f"✅ **{progress_percentage:.2f}% tiket telah selesai** dari total {total_tiket} tiket.")
-
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric(label="🎟️ Total Tiket", value=total_tiket)
-                        col2.metric(label="✅ Tiket Selesai di Hari H", value=selesai_hari_h)
-                        col3.metric(label="📋 Tiket Selesai Setelah Hari H", value=selesai_setelah_hari_h)
-                        col4.metric(label="⏳ Tiket Belum Selesai", value=belum_selesai)
-                        
-                        # Menampilkan rata-rata durasi pengerjaan
-                        if "Durasi (Jam)" in df_filtered.columns and not df_filtered["Durasi (Jam)"].isna().all():
-                            avg_durasi = df_filtered["Durasi (Jam)"].mean()
-                            st.metric("🕒 Rata-rata Durasi Pengerjaan", f"{avg_durasi:.2f} Jam")
-
-
-                        # **📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)**
-                        st.subheader("📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
-                        if not df_filtered.empty:
-                            df_summary = df_filtered.groupby("Created").agg(
-                                Total_Tiket=("Created", "count"),
-                                Total_Finish=("Finish", lambda x: (x == x).sum())  # Hitung tiket selesai
-                            ).reset_index()
-
-                            fig_bar = px.bar(
-                                df_summary, x="Created", y=["Total_Tiket", "Total_Finish"],
-                                barmode="group", labels={"Created": "Tanggal", "value": "Jumlah Tiket"},
-                                title="Total Tiket vs Tiket Selesai (Bar Chart)"
-                            )
-                            fig_bar.update_layout(
-                                legend=dict(title="Variable"),
-                                xaxis=dict(title="Tanggal"),
-                                yaxis=dict(title="Jumlah Tiket")
-                            )
-                            st.plotly_chart(fig_bar)
-
-                        # **📊 Grafik Pie Chart Distribusi Penyelesaian Tiket**
-                        st.subheader("🥇 Perbandingan Persentase Penyelesaian Tiket (Pie Chart)")
-                        labels = ["Tiket Selesai di Hari H", "Tiket Selesai Setelah Hari H", "Tiket Belum Selesai"]
-                        values = [selesai_hari_h, selesai_setelah_hari_h, belum_selesai]
-                        colors = ["blue", "lightblue", "red"]  # **Konsisten dengan warna legenda**
-
-                        fig_pie = go.Figure(data=[go.Pie(
-                            labels=labels,
-                            values=values,
-                            marker=dict(colors=colors),
-                            textinfo="percent+label"
-                        )])
-
-                        fig_pie.update_layout(
-                            title_text="Distribusi Penyelesaian Tiket",
-                            showlegend=True
-                        )
-                        st.plotly_chart(fig_pie)
-
-                        # **📋 Data Tiket yang difilter (dengan Expander)**
-                        with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
-                            st.dataframe(df_filtered)
-
-                elif tab_label == "🗓️ Data Visit":
-                        # tampilkan isi tab Data Visit
-                        st.title("📊 PERFORMANCE DASHBOARD")
-                        st.subheader("📅 Grafik Visit Per Hari")
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric(label="📅 Total Visit", value=total_visit)
-                        col2.metric(label="✅ Form Visit Finish pada hari H", value=selesai_hari_h_visit)
-                        col3.metric(label="📋 Form Visit Finish tidak dihari H", value=selesai_setelah_hari_h_visit)
-                        col4.metric(label="⏳ Not Visited", value=belum_dikunjungi)
-
-                        # **📊 Grafik Visit Per Hari hanya untuk Data Visit**
-                        st.subheader("📊 Grafik Visit Per Hari")
-                        if df_visit_filtered is not None and not df_visit_filtered.empty:
-                            df_summary_visit = df_visit_filtered.groupby("Schedule Date").size().reset_index(name="Total Visits")
-                            fig_visit = px.bar(df_summary_visit, x="Schedule Date", y="Total Visits", title="Jumlah Visit Per Hari")
-                            st.plotly_chart(fig_visit)
-
-                        with st.expander("📅 Klik untuk melihat data visit yang difilter"):
-                            st.dataframe(df_visit_filtered)
-
-                elif tab_label == "⭐ Data CSAT":
-                        # tampilkan isi tab Data CSAT
-                        st.title("📊 PERFORMANCE DASHBOARD")
-                        st.subheader("📊 Analisis CSAT")
-
-                        if not df_csat_filtered.empty:
-                            # 🎯 1. Rata-rata CSAT per Agent
-                            df_csat_avg = df_csat_filtered.groupby("Assign To")["Rating"].mean().reset_index()
-                            fig_csat_avg = px.bar(
-                                df_csat_avg,
-                                x="Assign To",
-                                y="Rating",
-                                title="📊 Rata-rata Skor CSAT per Agent",
-                                labels={"Rating": "Rata-rata CSAT"},
-                                color="Rating",
-                                color_continuous_scale="blues")
-                            st.plotly_chart(fig_csat_avg)
-
-                            # 📈 2. Melihat Tren Naik Turunnya Kepuasan Pelanggan (Line Chart)
-                            df_csat_trend = df_csat_filtered.groupby("Created")["Rating"].mean().reset_index()
-                            fig_csat_trend = px.line(
-                                df_csat_trend,
-                                x="Created",
-                                y="Rating",
-                                title="📈 Tren Kepuasan Pelanggan (Rata-rata CSAT per Hari)",
-                                labels={"Created": "Tanggal", "Rating": "Rata-rata CSAT"},
-                                markers=True)
-                            st.plotly_chart(fig_csat_trend)
-
-                        if df_csat_filtered is not None and not df_csat_filtered.empty:
-
-                            st.markdown("----")
-                        
-                        # **Pastikan grafik hanya muncul saat Agent yang dipilih adalah "All"**
-                            if support_filter == "All":
-                                st.subheader("🏆 Top 5 Agent dengan CSAT Tertinggi")
-
-                                # **Ambil 5 Agent dengan Rata-rata CSAT Tertinggi**
-                                df_top_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nlargest(5).reset_index()
-
-                                # **Buat Bar Chart dengan Skala Warna**
-                                fig_top_5 = px.bar(
-                                    df_top_5,
-                                    x="Rating",
-                                    y="Assign To",
-                                    text="Rating",
-                                    orientation="h",
-                                    title="Top 5 Agent dengan CSAT Tertinggi",
-                                    color="Rating",
-                                    color_continuous_scale="greens",
-                                    labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"})
-                                
-                                fig_top_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
-                                fig_top_5.update_layout(xaxis_title="Rata-rata CSAT", yaxis_title="Agent", coloraxis_showscale=True)
-
-                                st.plotly_chart(fig_top_5, use_container_width=True)
-
-                                # **BOTTOM 5 Agent dengan CSAT Terendah**
-                                st.subheader("⚠️ Bottom 5 Agent dengan CSAT Terendah")
-
-                                # **Ambil 5 Agent dengan Rata-rata CSAT Terendah**
-                                df_bottom_5 = df_csat_filtered.groupby("Assign To")["Rating"].mean().nsmallest(5).reset_index()
-
-                                # **Buat Bar Chart dengan Skala Warna**
-                                fig_bottom_5 = px.bar(
-                                    df_bottom_5,
-                                    x="Rating",
-                                    y="Assign To",
-                                    text="Rating",
-                                    orientation="h",
-                                    title="Bottom 5 Agent dengan CSAT Terendah",
-                                    color="Rating",
-                                    color_continuous_scale="reds",
-                                    labels={"Rating": "Rata-rata CSAT", "Assign To": "Agent"}
-                                )
-                                fig_bottom_5.update_traces(texttemplate='%{text:.2f}', textposition='inside')
-                                fig_bottom_5.update_layout(xaxis_title="Rata-rata CSAT", yaxis_title="Agent", coloraxis_showscale=True)
-
-                                st.plotly_chart(fig_bottom_5, use_container_width=True)
-
-                            else:
-                                st.warning("⚠️ Grafik ini hanya ditampilkan jika Agent yang dipilih adalah 'All'.")
-
-                        else:
-                            st.warning("🔍 Tidak ada data CSAT dalam rentang tanggal dan filter yang dipilih.")
-
-                elif tab_label == "⏱️ Activity":
-                        # tampilkan isi tab Activity
-                        st.title("⏱️ Effective vs Un-effective Time")
-
-                        if not df_efftime_filtered.empty:
-                            # Filter hanya status 'OK' untuk kalkulasi
-                            df_all_for_display = df_efftime_filtered.copy()
-                            df_valid = df_efftime_filtered[df_efftime_filtered["Status"] == "OK"]
-
-                            # Filter berdasarkan agent jika bukan "All"
-                            if support_filter != "All":
-                                df_valid = df_valid[df_valid["Assign To"] == support_filter]
-                                df_all_for_display = df_all_for_display[df_all_for_display["Assign To"] == support_filter]
-                            
-                            if not df_valid.empty:
-                                #Checkbox memunculkan nilai negatif
-                                show_negative = st.checkbox("Tampilkan nilai negatif un-effective time", value=False)
-                            
-                                # Konversi tipe data datetime dan timedelta
-                                df_valid = df_efftime_filtered[df_efftime_filtered["Status"] == "OK"].copy()
-                                df_valid["Schedule Date"] = pd.to_datetime(df_valid["Schedule Date"], errors='coerce').dt.date
-                                df_valid["Duration"] = pd.to_timedelta(df_valid["Duration"], errors='coerce')
-
-                                # Total hari kerja unik
-                                total_days = df_valid["Schedule Date"].nunique()
-
-                                # Standar kerja per hari (misal 9 jam)
-                                standard_duration = 9
-
-                                # Hitung total duration actual dari kolom
-                                total_duration = df_valid["Duration"].sum()
-                                total_eff_hours = total_duration.total_seconds() / 3600
-
-                                # Hitung durasi kerja sesuai standar (9 jam per hari)
-                                total_duration_hours = total_days * standard_duration
-
-                                # Un-effective = selisih dari jam kerja harian
-                                total_un_eff_hours = total_duration_hours - total_eff_hours
-
-                                # **Sembunyikan nilai negatif jika checkbox tidak dicentang**
-                                if not show_negative:
-                                    total_un_eff_hours = max(0, total_un_eff_hours)
-
-                                # Tampilkan metrik
-                                col1, col2, col3 = st.columns(3)
-                                col1.metric("📅 Durasi Kerja", f"{total_days} Hari")
-                                col2.metric("✅ Effective Time", f"{total_eff_hours:.2f} Jam")
-                                col3.metric("⏳ Un-effective Time", f"{total_un_eff_hours:.2f} Jam")
-
-                                # Markdown simulasi
-                                st.markdown("### 🔍 Simulasi Berdasarkan Status = 'OK'")
-                                st.markdown(f"""
-                                - **Durasi Kerja (Hari)**: `{total_days}`
-                                - ✅ **Total Duration (Jam)**: `{total_eff_hours:.2f}` `(Standar kerja: 9 jam/hari)`
-                                - ✅ **Total Effective Time (Jam)**: `{total_eff_hours:.2f}` `(Dihitung berdasarkan lama pengerjaan di Outlet)`
-                                - ⏳ **Total Un-effective Time (Jam)**: `{total_un_eff_hours:.2f}` `(Jam Kerja dikurangi Effective Time)`
-                                """)
-
-                                # Tampilkan seluruh data (OK + non-OK)
-                                st.markdown("### 🧾 Klik untuk melihat data aktivitas detail:")
-                                def highlight_non_ok(row):
-                                    color = 'background-color: #ffe6e6' if row["Status"] != "OK" else ''
-                                    return [color]*len(row)
-                                
-                                def format_timedelta(td):
-                                    if pd.isna(td):
-                                        return "-"
-                                    total_seconds = td.total_seconds()
-                                    hours = int(total_seconds // 3600)
-                                    minutes = int((total_seconds % 3600) // 60)
-                                    return f"{hours} jam {minutes} menit"
-
-                                # Format tampilan kolom timedelta
-                                df_all_for_display["Duration"] = pd.to_timedelta(df_all_for_display["Duration"], errors="coerce")
-                                df_all_for_display["Un-effective Time"] = pd.to_timedelta(df_all_for_display["Un-effective Time"], errors="coerce")
-                                df_all_for_display["Duration"] = df_all_for_display["Duration"].apply(format_timedelta)
-                                df_all_for_display["Un-effective Time"] = df_all_for_display["Un-effective Time"].apply(format_timedelta)
-
-                                styled_table = df_all_for_display.style.apply(highlight_non_ok, axis=1)
-
-                                with st.expander("📄 Klik untuk melihat data aktivitas detail"):
-                                    st.dataframe(styled_table)
-
-                            else:
-                                st.warning("Tidak ada data aktivitas dengan status **OK** pada rentang tanggal & agent yang dipilih.")
-                        else:
-                            st.warning("Data kosong setelah difilter. Coba sesuaikan rentang tanggal atau sheet.")
+render_tabs(tabs, tab_labels, selected_sheet, df_filtered, df_visit_filtered, df_csat_filtered, df_efftime_filtered, layanan, service_options, support_filter)
 			
 # **🔄 Tombol Refresh Data**
 if st.button("🔄 Refresh Data"):
