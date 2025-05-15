@@ -93,7 +93,7 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
         fig_bar.update_xaxes(type="category", tickangle=45)
         st.plotly_chart(fig_bar)
 
-    st.subheader("🥇 Distribusi Penyelesaian Tiket (Pie Chart)")
+    st.subheader("🥇 Distribusi Penyelesaian Tiket")
     colors = get_default_colors()
     labels = ["Tiket ≤ 24 Jam", "Tiket > 24 Jam"]
     values = [selesai_24_jam, selesai_lebih_24_jam]
@@ -112,6 +112,20 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
     )
 
     st.plotly_chart(fig_pie)
+
+    # Klasifikasi performa tiket
+    if total_tiket > 0:
+        selesai_percent = (selesai_24_jam / total_tiket) * 100
+        if selesai_percent >= 90:
+            kategori = "🟢 Sangat Baik"
+        elif selesai_percent >= 75:
+            kategori = "🟡 Baik"
+        elif selesai_percent >= 60:
+            kategori = "🟠 Cukup"
+        else:
+            kategori = "🔴 Kurang Baik"
+        st.info(f"**Klasifikasi Durasi Penyelesaian Tiket:** {kategori} ({selesai_percent:.1f}%)")
+
 
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
         df_display = df_filtered.copy()
@@ -161,8 +175,8 @@ def render_tab_visit(df_visit_filtered):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("✅ Total Visit", total_visit)
     col2.metric("❌ Not Visited", not_visited)
-    col3.metric("📅 Finish Form Visit = Hari H", selesai_hari_h_visit)
-    col4.metric("🕒 Finish Form Visit > Hari H", selesai_setelah_hari_h_visit)
+    col3.metric("📅 Visit Hari H", selesai_hari_h_visit)
+    col4.metric("🕒 Visit > Hari H", selesai_setelah_hari_h_visit)
 
     st.subheader("📈 Grafik Visit Hari H")
     # Filter hanya data yang visited
@@ -194,7 +208,7 @@ def render_tab_visit(df_visit_filtered):
     # Pie Chart
     st.subheader("🟠 Distribusi Penyelesaian Visit")
 
-    labels = ["Visit Selesai Hari H", "Visit Selesai Setelah Hari H", "Belum Menyelesaikan Form Visit"]
+    labels = ["Finish form Visit Hari H", "Finish form Visit H +1", "Belum Menyelesaikan Form Visit"]
     values = [selesai_hari_h_visit, selesai_setelah_hari_h_visit, not_visited]
 
     colors = px.colors.qualitative.Set2
@@ -212,6 +226,20 @@ def render_tab_visit(df_visit_filtered):
         annotations=[dict(text=str(total_visit + not_visited), x=0.5, y=0.5, font_size=16, showarrow=False)]
     )
     st.plotly_chart(fig_pie)
+    # Klasifikasi performa visit
+    total_semua = total_visit + not_visited
+    if total_semua > 0:
+        selesai_hari_h_percent = (selesai_hari_h_visit / total_semua) * 100
+        if selesai_hari_h_percent >= 90:
+            kategori_visit = "🟢 Sangat Baik"
+        elif selesai_hari_h_percent >= 75:
+            kategori_visit = "🟡 Baik"
+        elif selesai_hari_h_percent >=60:
+            kategori_visit = "🟠 Cukup"
+        else:
+            kategori_visit = "🔴 Kurang"
+        st.info(f"**Klasifikasi Penyelesaian Visit:** {kategori_visit} ({selesai_hari_h_percent:.1f}%)")
+
 
     # Tabel data
     st.subheader("📋 Data Visit")
