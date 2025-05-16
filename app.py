@@ -126,6 +126,54 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             kategori = "🔴 Kurang Baik"
         st.info(f"**Klasifikasi Durasi Penyelesaian Tiket:** {kategori} ({selesai_percent:.1f}%)")
 
+    if support_filter == "All" and not df_filtered.empty:
+        agent_summary = df_filtered.groupby("Assign To").agg(
+            Total_Ticket = ("Ticket Number", "count"),
+            Durasi_Kurang_24_Jam = ("Durasi (Jam)", lambda x: (x <= 24).sum())
+        ).reset_index()
+
+        agent_summary["Ontime_Percentage"] = (
+            agent_summary["Durasi_Kurang_24_Jam"] / agent_summary["Total_Ticket"]
+        ) * 100
+
+        # Klasifikasi berdasarkan ambang
+        agent_summary["Klasifikasi"] = agent_summary["Ontime_Percentage"].apply(lambda x: 
+            "Sangat Baik" if x >= 90 else 
+            "Baik" if x >= 75 else 
+            "Cukup" if x >= 60 else 
+            "Kurang Baik"
+        )
+
+        # Cari agent terdekat dari masing-masing kategori
+        target_klasifikasi = {
+            "Sangat Baik": 90,
+            "Baik": 75,
+            "Cukup": 60,
+            "Kurang Baik": 50}
+
+        selected_agents = []
+
+        for klasifikasi, target in target_klasifikasi.items():
+            df_k = agent_summary[agent_summary["Klasifikasi"] == klasifikasi].copy()
+            if not df_k.empty:
+                selected_agents.append(df_k.sort_values("Ontime_Percentage", ascending=False).iloc[0])
+
+        # Gabungkan agent hasil seleksi
+        representative_df = pd.DataFrame(selected_agents).reset_index(drop=True)
+
+        # Tampilkan hasil klasifikasi ringkas
+        for _, row in representative_df.iterrows():
+            nama = row["Assign To"]
+            persen = row["Ontime_Percentage"]
+            kategori = row["Klasifikasi"]
+            icon = {
+                "Sangat Baik": "🟢",
+                "Baik": "🟡",
+                "Cukup": "🟠",
+                "Kurang Baik": "🔴"
+            }.get(kategori, "⚪")
+
+            st.markdown(f"- {icon} **{nama}**: {kategori} ({persen:.1f}%)")
 
     with st.expander("📋 Klik untuk melihat data tiket yang difilter"):
         df_display = df_filtered.copy()
@@ -207,7 +255,6 @@ def render_tab_visit(df_visit_filtered):
 
     # Pie Chart
     st.subheader("🟠 Distribusi Penyelesaian Visit")
-
     labels = ["Finish form Visit Hari H", "Finish form Visit H +1", "Belum Menyelesaikan Form Visit"]
     values = [selesai_hari_h_visit, selesai_setelah_hari_h_visit, not_visited]
 
@@ -240,6 +287,49 @@ def render_tab_visit(df_visit_filtered):
             kategori_visit = "🔴 Kurang"
         st.info(f"**Klasifikasi Penyelesaian Visit:** {kategori_visit} ({selesai_hari_h_percent:.1f}%)")
 
+    if support_filter == "All" and not df_visit_filtered.empty:
+        visit_summary = df_visit_filtered[df_visit_filtered["Status"] == "Visited"].copy()
+        visit_summary = visit_summary.groupby("Assign To").agg(
+            Total_Visit=("Status", "count"),
+            Finish_Hari_H=("Durasi (Jam)", lambda x: (x <= 24).sum())
+        ).reset_index()
+        
+        visit_summary["Ontime_Percentage"] = visit_summary["Finish_Hari_H"] / visit_summary["Total_Visit"] * 100
+
+        visit_summary["Klasifikasi"] = visit_summary["Ontime_Percentage"].apply(lambda x:
+            "Sangat Baik" if x >= 90 else
+            "Baik" if x >= 75 else
+            "Cukup" if x >= 60 else
+            "Kurang Baik"
+        )
+
+        target_klasifikasi = {
+            "Sangat Baik": 90,
+            "Baik": 75,
+            "Cukup": 60,
+            "Kurang Baik": 50
+        }
+
+        selected_visits = []
+        for klasifikasi, _ in target_klasifikasi.items():
+            df_k = visit_summary[visit_summary["Klasifikasi"] == klasifikasi].copy()
+            if not df_k.empty:
+                selected_visits.append(df_k.sort_values("Ontime_Percentage", ascending=False).iloc[0])
+
+        visit_representative_df = pd.DataFrame(selected_visits).reset_index(drop=True)
+
+        for _, row in visit_representative_df.iterrows():
+            nama = row["Assign To"]
+            persen = row["Ontime_Percentage"]
+            kategori = row["Klasifikasi"]
+            icon = {
+                "Sangat Baik": "🟢",
+                "Baik": "🟡",
+                "Cukup": "🟠",
+                "Kurang Baik": "🔴"
+            }.get(kategori, "⚪")
+            
+            st.markdown(f"**{icon} {nama}**: {kategori} ({persen:.1f}%)")
 
     # Tabel data
     st.subheader("📋 Data Visit")
