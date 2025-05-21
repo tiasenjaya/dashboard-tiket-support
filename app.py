@@ -510,6 +510,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime
+import calendar
 from datetime import timedelta
 
 # 🎨 Palet Warna Kontras untuk Konsistensi Visual
@@ -571,41 +572,50 @@ max_date = df["Created"].max() if "Created" in df.columns else df["Schedule Date
 min_date = pd.to_datetime(min_date)
 max_date = pd.to_datetime(max_date)
 
-date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date)
+# 🎯 Pilih Mode Filter Tanggal
+filter_mode = st.sidebar.radio("🎯 Mode Filter Tanggal", ["Per Hari", "Per Bulan"], horizontal=True)
 
-# Tangani kasus jika hanya satu tanggal dipilih
-if isinstance(date_range, (list,tuple)):
-    if len(date_range) == 2:
-        start_date, end_date = date_range
-    elif len(date_range) == 1:
-        start_date = end_date = date_range[0]
+if filter_mode == "Per Hari":
+    date_range = st.sidebar.date_input("📅 Pilih Rentang Tanggal", [min_date, max_date], min_value=min_date, max_value=max_date, key="filter_per_hari")
+
+    if isinstance(date_range, (list, tuple)):
+        if len(date_range) == 2:
+            start_date = pd.to_datetime(date_range[0])
+            end_date = pd.to_datetime(date_range[1])
+        elif len(date_range) == 1:
+            start_date = end_date = pd.to_datetime(date_range[0])
+        else:
+            start_date = end_date = None
     else:
         start_date = end_date = None
 else:
-    start_date = end_date = None
+    df["Created"] = pd.to_datetime(df["Created"], errors="coerce")
+    available_months = sorted(df["Created"].dt.month.unique())
+    available_years = sorted(df["Created"].dt.year.unique())
 
-if start_date and end_date:
-    start_date = pd.to_datetime(start_date)
-    end_date = pd.to_datetime(end_date)
+    month_map = {
+        1: "Januari", 2: "Februari", 3: "Maret", 4: "April", 5: "Mei", 6: "Juni",
+        7: "Juli", 8: "Agustus", 9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+    }
 
+    col1, col2 = st.sidebar.columns(2)
+    selected_month = col1.selectbox("📅 Pilih Bulan", available_months, format_func=lambda x: month_map[x], key="filter_bulan")
+    selected_year = col2.selectbox("📅 Pilih Tahun", available_years, key="filter_tahun")
+
+    start_date = pd.to_datetime(f"{selected_year}-{selected_month:02d}-01")
+    end_day = calendar.monthrange(selected_year, selected_month)[1]
+    end_date = pd.to_datetime(f"{selected_year}-{selected_month:02d}-{end_day}")
 
 # **👤 Sidebar - Pilih Support**
 support_options = sorted(df["Assign To"].dropna().unique().tolist())
 support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + support_options)
 
-
-# **📌 Filter Data berdasarkan pilihan**
-# Inisialisasi df_filtered
 df_filtered = df.copy()
-
-# Pastikan user memilih 2 tanggal (start & end)
-if "Created" in df.columns and isinstance(date_range, tuple) and len(date_range) == 2:
-    start_date = pd.to_datetime(date_range[0])
-    end_date = pd.to_datetime(date_range[1])
-
+if start_date is not None and end_date is not None:
     df_filtered = df_filtered[
         (df_filtered["Created"] >= start_date) &
-        (df_filtered["Created"] <= end_date)]
+        (df_filtered["Created"] <= end_date)
+    ]
 
 if support_filter != "All":
     df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
@@ -670,17 +680,8 @@ if selected_sheet == "SUPPORT":
     if "Schedule Date" in df_visit.columns:
         df_visit["Schedule Date"] = pd.to_datetime(df_visit["Schedule Date"], errors="coerce", dayfirst=True)
 
-    # Konversi nilai date_input ke datetime64 agar cocok dengan kolom Schedule Date
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start_date = pd.to_datetime(date_range[0])
-        end_date = pd.to_datetime(date_range[1]).replace(hour=23, minute=59, second=59)
-
-        df_filtered = df_filtered[
-            (df_filtered["Created"] >= start_date) &
-            (df_filtered["Created"] <= end_date)]
     else:
         st.warning("📅 Silakan pilih rentang tanggal lengkap (2 tanggal).")
-
 
     if support_filter != "All":
         df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"] == support_filter]
