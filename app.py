@@ -88,7 +88,11 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             color_discrete_sequence=get_default_colors(),
             barmode="group",
             labels={"Created": "Tanggal", "value": "Jumlah Tiket"},
-            title="Total Tiket vs Tiket Selesai ≤ 24 Jam (Bar Chart)")
+            title="Total Tiket vs Tiket Selesai ≤ 24 Jam (Bar Chart)"
+            )
+        for trace in fig_bar.data:
+            trace.text = trace.y
+            trace.textposition = 'outside'
         # Penting! ubah x-axis ke mode kategori agar tanggal kosong disembunyikan
         fig_bar.update_xaxes(type="category", tickangle=45)
         st.plotly_chart(fig_bar)
