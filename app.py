@@ -527,7 +527,7 @@ def render_tab_csat(df_csat_filtered, support_filter):
         st.warning("🔍 Tidak ada data CSAT dalam rentang tanggal dan filter yang dipilih.")
 
 # ===============================
-# ⏱️ TAB: Response Time (CARELINE)
+# ⏱️ TAB: Response Time (CARELINE & CUSTCARE)
 # ===============================
 def render_tab_response_time(df_filtered, support_filter):
     st.title("⏱️ Analisis Response Time")
@@ -555,7 +555,8 @@ def render_tab_response_time(df_filtered, support_filter):
 
     # ⏳ Periode & Jumlah Tiket
     st.markdown(f"📆 **Periode:** {df_filtered['Created'].min().date()} s.d {df_filtered['Created'].max().date()}")
-    st.markdown(f"🎫 **Jumlah Chat:** {len(df_filtered)}")
+    st.markdown(f"<b>Jumlah Chat:</b> {len(df_filtered)}", unsafe_allow_html=True)
+
 
     # 📊 Perhitungan total dan rata-rata
     total_first_response = df_filtered["First Response Time"].sum()
@@ -600,8 +601,8 @@ def render_tab_response_time(df_filtered, support_filter):
     try:
         fastest = df_agent_summary.sort_values("Avg First").iloc[0]["Agent"]
         slowest = df_agent_summary.sort_values("Avg First").iloc[-1]["Agent"]
-        st.markdown(f"🏅 Agent tercepat: **{fastest}**")
-        st.markdown(f"🐢 Agent terlambat: **{slowest}**")
+        st.markdown(f"🥈 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
+        st.markdown(f"🐢 Agent terlambat: <b>{slowest}</b>", unsafe_allow_html=True)
     except:
         pass
 
@@ -686,7 +687,8 @@ GOOGLE_SHEET_LINKS = {
         "interaction": "https://docs.google.com/spreadsheets/d/10GxKf8rurFofXf86BdsnLJWly1eNOijjAz8_GPHftqQ/gviz/tq?tqx=out:csv&sheet=INTERACTION",
     },
     "CUSTCARE": {
-        "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET"
+        "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
+        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP"
     },
     "ADMIN": {
         "ticket": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
@@ -714,6 +716,10 @@ elif selected_sheet == "CARELINE":
 # ⬇️ ADMIN
 elif selected_sheet == "ADMIN":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
+
+# ⬇️ ADMIN
+elif selected_sheet == "CUSTCARE":
+    df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
 
 # ===============================
 # 🧹 PARSING & VALIDASI DATA
@@ -957,7 +963,7 @@ elif selected_sheet == "CARELINE":
 elif selected_sheet == "ADMIN":
     tab_labels = ["📄 Data Tiket", "⭐ Data CSAT"]
 else:  # CUSTCARE
-    tab_labels = ["📄 Data Tiket"]
+    tab_labels = ["📄 Data Tiket", "⏱️ Response Time"]
 
 if "last_filter" not in st.session_state:
     st.session_state.last_filter = (selected_sheet, start_date, end_date, support_filter)
@@ -990,7 +996,7 @@ for i, tab in enumerate(tabs):
         elif label == "⭐ Data CSAT" and selected_sheet in ["CARELINE", "ADMIN"]:
             render_tab_csat(df_csat_filtered, support_filter)
 
-        elif label == "⏱️ Response Time" and selected_sheet == "CARELINE":
+        elif label == "⏱️ Response Time" and selected_sheet in ["CARELINE", "CUSTCARE"]:
             render_tab_response_time(df_goapp_filtered, support_filter)
 
         elif label == "⏱️ Activity" and selected_sheet == "SUPPORT":
