@@ -582,30 +582,33 @@ def render_tab_response_time(df_filtered, support_filter):
     st.markdown("---")
 
     # 📋 Ringkasan per Agent
-    df_agent_summary = (
+    df_raw_summary = (
         df_filtered.groupby("Assign To")[["First Response Time", "Total Open Time"]]
         .agg(["mean", "sum"])
-        .reset_index()
     )
-    df_agent_summary.columns = ["Agent", "Avg First", "Total First", "Avg Open", "Total Open"]
+    df_raw_summary.columns = ["Avg First", "Total First", "Avg Open", "Total Open"]
+    df_raw_summary = df_raw_summary.reset_index()
 
+    # Simpan hasil asli untuk perhitungan tercepat/terlambat
+    try:
+        fastest = df_raw_summary.sort_values("Avg First").iloc[0]["Assign To"]
+        slowest = df_raw_summary.sort_values("Avg First").iloc[-1]["Assign To"]
+    except:
+        fastest, slowest = "-", "-"
+
+    # Buat versi untuk tampilan (formatted string)
+    df_display_summary = df_raw_summary.copy()
     for col in ["Avg First", "Total First", "Avg Open", "Total Open"]:
-        df_agent_summary[col] = df_agent_summary[col].apply(format_td)
+        df_display_summary[col] = df_display_summary[col].apply(format_td)
 
+    # Tampilkan
     st.markdown("### 🔍 Ringkasan per Agent")
     st.dataframe(
-        df_agent_summary.style.highlight_max(axis=0, subset=["Avg First", "Avg Open"], color="lightcoral")
+        df_display_summary.style.highlight_max(axis=0, subset=["Avg First", "Avg Open"], color="lightcoral")
     )
 
-    # 🥇 Agent tercepat / terlambat
-    try:
-        fastest = df_agent_summary.sort_values("Avg First").iloc[0]["Agent"]
-        slowest = df_agent_summary.sort_values("Avg First").iloc[-1]["Agent"]
-        st.markdown(f"🥈 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
-        st.markdown(f"🐢 Agent terlambat: <b>{slowest}</b>", unsafe_allow_html=True)
-    except:
-        pass
-
+    st.markdown(f"🥈 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
+    st.markdown(f"🐢 Agent terlambat: <b>{slowest}</b>", unsafe_allow_html=True)
     st.markdown("---")
 
     # 📊 Grafik Rata-rata First Response per Agent
@@ -688,8 +691,8 @@ GOOGLE_SHEET_LINKS = {
     },
     "CUSTCARE": {
         "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
-        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
         "csat": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
+        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
     },
     "ADMIN": {
         "ticket": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
@@ -773,9 +776,12 @@ filter_mode = st.sidebar.radio("🎯 Mode Filter Tanggal", ["Per Hari", "Per Bul
 # ===============================
 df_tanggal_sources = []
 
-for df_source in [df, df_visit, df_efftime, df_csat, df_goapp]:
+for df_source in [df, df_visit, df_efftime, df_csat, df_goapp, df_interaksi]:
     if df_source is not None and not df_source.empty and "Created" in df_source.columns:
-        df_tanggal_sources.append(df_source[["Created"]])
+        df_source["Created"] = pd.to_datetime(df_source["Created"], errors="coerce")
+        df_valid = df_source[["Created"]].dropna()
+        if not df_valid.empty:
+            df_tanggal_sources.append(df_valid)
 
 df_tanggal = pd.concat(df_tanggal_sources, ignore_index=True) if df_tanggal_sources else pd.DataFrame(columns=["Created"])
 
@@ -814,7 +820,7 @@ elif filter_mode == "Per Bulan":
 
     col1, col2 = st.sidebar.columns(2)
     selected_month = col1.selectbox("📅 Pilih Bulan", available_months, format_func=lambda x: month_map[x])
-    selected_year = col2.selectbox("📅 Pilih Tahun", available_years)
+    selected_year = int(col2.selectbox("📅 Pilih Tahun", available_years))
 
     start_date = datetime.datetime(int(selected_year), int(selected_month), 1)
     end_day = calendar.monthrange(int(selected_year), int(selected_month))[1]
@@ -822,8 +828,13 @@ elif filter_mode == "Per Bulan":
 
 # 📆 Per Tahun (multi-bulan)
 elif filter_mode == "Per Tahun":
-    available_years = sorted(df_tanggal["Created"].dt.year.dropna().unique())
-    selected_year = st.sidebar.selectbox("📅 Pilih Tahun", available_years)
+    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors='coerce')
+
+    st.write("📅 Kolom Created:", df_tanggal["Created"].head())
+    st.write("🧪 Tipe data kolom:", df_tanggal["Created"].dtype)
+
+    available_years = sorted(df_tanggal["Created"].dropna().dt.year.astype(int).unique())
+    selected_year = int(st.sidebar.selectbox("📅 Pilih Tahun", available_years))
 
     month_map = {
         1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
@@ -834,7 +845,7 @@ elif filter_mode == "Per Tahun":
 
     available_months = sorted(df_tanggal[df_tanggal["Created"].dt.year == selected_year]["Created"].dt.month.unique())
     month_labels = [month_map[m] for m in available_months]
-    selected_months = st.sidebar.multiselect("📆 Pilih Beberapa Bulan", month_labels)
+    selected_months = st.sidebar.multiselect("📅 Pilih Beberapa Bulan", month_labels)
 
     selected_month_numbers = [reverse_month_map[m] for m in selected_months]
     if selected_month_numbers:
