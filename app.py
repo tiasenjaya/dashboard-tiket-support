@@ -455,7 +455,7 @@ def render_tab_activity(df_efftime_filtered, support_filter):
         st.warning("Data kosong setelah difilter. Coba sesuaikan rentang tanggal atau sheet.")
 
 # ===============================
-# ⭐ TAB: Data CSAT (CARELINE / ADMIN)
+# ⭐ TAB: Data CSAT (CARELINE/ ADMIN/ CUSTCARE)
 # ===============================
 def render_tab_csat(df_csat_filtered, support_filter):
     st.title("📊 PERFORMANCE DASHBOARD")
@@ -688,7 +688,8 @@ GOOGLE_SHEET_LINKS = {
     },
     "CUSTCARE": {
         "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
-        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP"
+        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
+        "csat": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
     },
     "ADMIN": {
         "ticket": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
@@ -717,9 +718,10 @@ elif selected_sheet == "CARELINE":
 elif selected_sheet == "ADMIN":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
 
-# ⬇️ ADMIN
+# ⬇️ CUSTCARE
 elif selected_sheet == "CUSTCARE":
     df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
+    df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
 
 # ===============================
 # 🧹 PARSING & VALIDASI DATA
@@ -963,7 +965,7 @@ elif selected_sheet == "CARELINE":
 elif selected_sheet == "ADMIN":
     tab_labels = ["📄 Data Tiket", "⭐ Data CSAT"]
 else:  # CUSTCARE
-    tab_labels = ["📄 Data Tiket", "⏱️ Response Time"]
+    tab_labels = ["📄 Data Tiket", "⏱️ Response Time", "⭐ Data CSAT"]
 
 if "last_filter" not in st.session_state:
     st.session_state.last_filter = (selected_sheet, start_date, end_date, support_filter)
@@ -993,7 +995,7 @@ for i, tab in enumerate(tabs):
         elif label == "🗓️ Data Visit" and selected_sheet == "SUPPORT":
             render_tab_visit(df_visit_filtered, support_filter)
 
-        elif label == "⭐ Data CSAT" and selected_sheet in ["CARELINE", "ADMIN"]:
+        elif label == "⭐ Data CSAT" and selected_sheet in ["CARELINE", "ADMIN", "CUSTCARE"]:
             render_tab_csat(df_csat_filtered, support_filter)
 
         elif label == "⏱️ Response Time" and selected_sheet in ["CARELINE", "CUSTCARE"]:
