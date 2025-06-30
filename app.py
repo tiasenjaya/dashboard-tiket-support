@@ -693,7 +693,7 @@ def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
     divisi_counts.columns = ["Divisi", "Jumlah Interaksi"]
     divisi_counts = divisi_counts.sort_values("Jumlah Interaksi", ascending=False)
 
-    st.markdown("### 🧩 Jumlah Interaksi per Divisi")
+    st.markdown("### 🧩 Jumlah Interaksi per Divisi & Client")
     cols = st.columns(3)
 
     emoji_map = {
