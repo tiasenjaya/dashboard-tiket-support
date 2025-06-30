@@ -543,7 +543,7 @@ def render_tab_response_time(df_filtered, support_filter):
         st.warning("Tidak ada data untuk agent dan filter waktu yang dipilih.")
         return
 
-    # Format timedelta jadi string
+    # Format timedelta ke string
     def format_td(td):
         if pd.isnull(td):
             return "-"
@@ -553,12 +553,15 @@ def render_tab_response_time(df_filtered, support_filter):
         minutes = (total_seconds % 3600) // 60
         return f"{days} Days {hours} Hours {minutes} Minutes"
 
-    # ⏳ Periode & Jumlah Tiket
+    # ================================
+    # ⏳ Periode & Jumlah Chat
+    # ================================
     st.markdown(f"📆 **Periode:** {df_filtered['Created'].min().date()} s.d {df_filtered['Created'].max().date()}")
     st.markdown(f"<b>Jumlah Chat:</b> {len(df_filtered)}", unsafe_allow_html=True)
 
-
-    # 📊 Perhitungan total dan rata-rata
+    # ================================
+    # 📊 Ringkasan Waktu
+    # ================================
     total_first_response = df_filtered["First Response Time"].sum()
     avg_first_response = df_filtered["First Response Time"].mean()
     total_open_time = df_filtered["Total Open Time"].sum()
@@ -569,62 +572,84 @@ def render_tab_response_time(df_filtered, support_filter):
     with col1:
         st.subheader("🕐 Total First Response")
         st.success(format_td(total_first_response))
-
         st.subheader("🕒 Total Open Time")
         st.info(format_td(total_open_time))
     with col2:
         st.subheader("⏱️ Rata-rata First Response")
         st.success(format_td(avg_first_response))
-
         st.subheader("📊 Rata-rata Open Time")
         st.info(format_td(avg_open_time))
 
     st.markdown("---")
 
+    # ================================
     # 📋 Ringkasan per Agent
-    df_raw_summary = (
-        df_filtered.groupby("Assign To")[["First Response Time", "Total Open Time"]]
+    # ================================
+    df_eval = df_filtered.copy()
+    df_eval["Assign To"] = df_eval["Assign To"].astype(str).str.strip().str.title()
+
+    df_eval = (
+        df_eval.groupby("Assign To")[["First Response Time", "Total Open Time"]]
         .agg(["mean", "sum"])
     )
-    df_raw_summary.columns = ["Avg First", "Total First", "Avg Open", "Total Open"]
-    df_raw_summary = df_raw_summary.reset_index()
+    df_eval.columns = ["Avg First", "Total First", "Avg Open", "Total Open"]
+    df_eval = df_eval.reset_index()
 
-    # Simpan hasil asli untuk perhitungan tercepat/terlambat
+    # ================================
+    # ⚡ Tentukan agent tercepat dan terlambat
+    # ================================
+    fastest, slowest = "-", "-"
     try:
-        fastest = df_raw_summary.sort_values("Avg First").iloc[0]["Assign To"]
-        slowest = df_raw_summary.sort_values("Avg First").iloc[-1]["Assign To"]
-    except:
-        fastest, slowest = "-", "-"
+        # Buat kolom bantu dengan nilai detik total untuk perbandingan lebih aman
+        df_eval["_avg_first_secs"] = df_eval["Avg First"].dt.total_seconds()
+        df_eval["_total_first_secs"] = df_eval["Total First"].dt.total_seconds()
 
-    # Buat versi untuk tampilan (formatted string)
-    df_display_summary = df_raw_summary.copy()
+        sort_criteria = ["_avg_first_secs", "_total_first_secs", "Assign To"]
+        sorted_eval = df_eval.sort_values(by=sort_criteria, ascending=[True, True, True])
+
+
+        # Ambil nilai terkecil (detik) untuk Avg First
+        min_avg = df_eval["_avg_first_secs"].min()
+
+        # Ambil kandidat tercepat (dengan toleransi 60 detik)
+        fastest_candidates = df_eval[df_eval["_avg_first_secs"] <= min_avg + 60]
+
+        # Jika hanya satu kandidat → langsung pakai
+        if len(fastest_candidates) == 1:
+            fastest = fastest_candidates.iloc[0]["Assign To"]
+        else:
+            # Jika banyak kandidat, ambil dengan Total First terkecil
+            fastest = fastest_candidates.sort_values("_total_first_secs").iloc[0]["Assign To"]
+
+        # Agent terlambat tetap seperti biasa
+        slowest = df_eval.sort_values(["Avg First", "Assign To"], ascending=[False, False]).iloc[0]["Assign To"]
+    except Exception as e:
+        st.warning(f"Gagal melakukan evaluasi agent tercepat: {e}")
+
+    # ================================
+    # 📊 Tampilkan Ringkasan per Agent
+    # ================================
+    df_display = df_eval.copy()
     for col in ["Avg First", "Total First", "Avg Open", "Total Open"]:
-        df_display_summary[col] = df_display_summary[col].apply(format_td)
+        df_display[col] = df_display[col].apply(format_td)
 
-    # Tampilkan
-    st.markdown("### 🔍 Ringkasan per Agent")
+    df_display = df_display.drop(columns=["_avg_first_secs", "_total_first_secs"])
+
+    st.markdown("### 📊 Ringkasan per Agent")
     st.dataframe(
-        df_display_summary.style.highlight_max(axis=0, subset=["Avg First", "Avg Open"], color="lightcoral")
+        df_display.style.highlight_max(
+            axis=0, subset=["Avg First", "Avg Open"], color="lightcoral"
+        )
     )
 
-    st.markdown(f"🥈 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
+    # ================================
+    # 🔽 Tampilkan nama agent tercepat dan terlambat
+    # ================================
+    st.markdown(f"🔵 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
     st.markdown(f"🐢 Agent terlambat: <b>{slowest}</b>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # 📊 Grafik Rata-rata First Response per Agent
-    try:
-        chart_df = df_filtered.groupby("Assign To")["First Response Time"].mean().reset_index()
-        chart_df["Minutes"] = chart_df["First Response Time"].dt.total_seconds() / 60
-
-        fig = px.bar(chart_df, x="Minutes", y="Assign To", orientation="h",
-                     title="⏱️ Rata-rata First Response per Agent", color="Minutes",
-                     color_continuous_scale="Blues")
-        st.plotly_chart(fig, use_container_width=True)
-    except:
-        pass
-
-    # 🔎 Data Detail
-    st.markdown("---")
+    # === Data detail ===
     with st.expander("📋 Lihat Data Detail"):
         display_df = df_filtered[["Created", "Assign To", "First Response Time", "Total Open Time"]].copy()
         display_df["First Response Time"] = display_df["First Response Time"].apply(format_td)
@@ -634,16 +659,34 @@ def render_tab_response_time(df_filtered, support_filter):
 # ===============================
 #🗣️ TAB: Interaksi Careline
 # ===============================
-def render_tab_interaksi(df_interaksi_filtered):
+def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
     st.markdown("## 🧠 Ringkasan Interaksi")
+
+    # Ambil response time dari session_state jika ada
+    df_response_time_all = df_response_time
+
+    if df_response_time_all is None or df_response_time_all.empty:
+        st.warning("Data response time tidak tersedia.")
+        return
+
+    if "Created" in df_response_time_all.columns:
+        jumlah_chat = df_response_time_all["Created"].count()
+    else:
+        jumlah_chat = 0
 
     # Metrik Utama
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Interaksi", len(df_interaksi_filtered))
+    col1.metric("Total Interaksi", len(df_interaksi_filtered) + jumlah_chat)
     col2.metric("Jumlah Agent", df_interaksi_filtered["Assign To"].dropna().nunique())
+    avg_per_day = (df_interaksi_filtered.groupby("Created").size().sum() + jumlah_chat) / df_interaksi_filtered["Created"].nunique()
+    col3.metric("Rata-rata Interaksi / Hari", f"{avg_per_day:.0f}")
 
-    avg_per_day = df_interaksi_filtered.groupby("Created").size().mean()
-    col3.metric("Rata-rata Interaksi / Hari", f"{avg_per_day:.2f}")
+    # Hitung jumlah chat dari response time
+    if "Created" in df_response_time_all.columns:
+        jumlah_chat = df_response_time_all["Created"].count()
+    else:
+        jumlah_chat = 0
+        st.warning("Kolom 'Created' tidak tersedia di data response time.")
 
     # Interaksi per Divisi
     divisi_counts = df_interaksi_filtered["Interaction"].value_counts().reset_index()
@@ -658,17 +701,22 @@ def render_tab_interaksi(df_interaksi_filtered):
         "Admin": "🧾",
         "BC": "📞",
         "Careline": "💬",
-        "Custcare": "🤝"
+        "Custcare": "🫶",
+        "Client": "👥",
     }
 
     for i, row in enumerate(divisi_counts.itertuples()):
         col = cols[i % 3]
-        emoji = emoji_map.get(row.Divisi, "🔹")
+        emoji = emoji_map.get(row.Divisi, " ")
         col.metric(f"{emoji} {row.Divisi}", row._2)
+
+    # Tambahkan Jumlah Chat sebagai "Client"
+    col_client = cols[len(divisi_counts) % 3]
+    col_client.metric("👥 Client", jumlah_chat)
 
     # Tampilkan Tabel
     st.markdown("---")
-    st.markdown("### 📄 Detail Data Interaksi")
+    st.markdown("📊 **Detail Data Interaksi**")
     st.dataframe(df_interaksi_filtered)
 
 # ===============================
@@ -716,7 +764,7 @@ elif selected_sheet == "CARELINE":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
     df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
     df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
-
+    st.session_state["df_response_time"] = df_goapp
 # ⬇️ ADMIN
 elif selected_sheet == "ADMIN":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
@@ -829,9 +877,6 @@ elif filter_mode == "Per Bulan":
 # 📆 Per Tahun (multi-bulan)
 elif filter_mode == "Per Tahun":
     df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors='coerce')
-
-    st.write("📅 Kolom Created:", df_tanggal["Created"].head())
-    st.write("🧪 Tipe data kolom:", df_tanggal["Created"].dtype)
 
     available_years = sorted(df_tanggal["Created"].dropna().dt.year.astype(int).unique())
     selected_year = int(st.sidebar.selectbox("📅 Pilih Tahun", available_years))
@@ -1016,7 +1061,8 @@ for i, tab in enumerate(tabs):
             render_tab_activity(df_efftime_filtered, support_filter)
 
         elif label == "🗣️ Data Interaksi" and selected_sheet == "CARELINE":
-            render_tab_interaksi(df_interaksi_filtered)
+            df_response_time = st.session_state.get("df_response_time", pd.DataFrame())
+            render_tab_interaksi(df_interaksi_filtered, df_response_time)
 
 # 🔄 Tombol Refresh
 if st.button("🔄 Refresh Data"):
