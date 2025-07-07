@@ -45,10 +45,18 @@ def calculate_ticket_metrics(df):
 # 🗓️ Visit Metrics
 # =========================
 def calculate_visit_metrics(df):
-    total_visit = len(df)
-    selesai_hari_h = len(df[df["Schedule Date"] == df["Visit Date"]])
-    selesai_setelah_hari_h = len(df[df["Schedule Date"] < df["Visit Date"]])
+    # Hitung durasi dalam jam jika belum ada
+    if "Durasi (Jam)" not in df.columns:
+        df["Schedule Date"] = pd.to_datetime(df["Schedule Date"], errors='coerce')
+        df["Visit Date"] = pd.to_datetime(df["Visit Date"], errors='coerce')
+        df["Durasi (Jam)"] = (df["Visit Date"] - df["Schedule Date"]).dt.total_seconds() / 3600
+
+    visited_df = df[df["Status"] == "Visited"]
+    total_visit = len(visited_df)
+    selesai_hari_h = len(visited_df[visited_df["Durasi (Jam)"] <= 24])
+    selesai_setelah_hari_h = len(visited_df[visited_df["Durasi (Jam)"] > 24])
     belum_dikunjungi = len(df[df["Status"] != "Visited"]) if "Status" in df.columns else 0
+
     return total_visit, selesai_hari_h, selesai_setelah_hari_h, belum_dikunjungi
 
 # =========================
@@ -251,10 +259,8 @@ def render_tab_visit(df_visit_filtered, support_filter):
     df_visit_filtered["Durasi (Jam)"] = (df_visit_filtered["Visit Date"] - df_visit_filtered["Schedule Date"]).dt.total_seconds() / 3600
 
     # Hitung metrik
-    total_visit = df_visit_filtered[df_visit_filtered["Status"] == "Visited"].shape[0]
-    not_visited = df_visit_filtered[df_visit_filtered["Status"] == "Not Visited"].shape[0]
-    selesai_hari_h_visit = df_visit_filtered[(df_visit_filtered["Status"] == "Visited") & (df_visit_filtered["Durasi (Jam)"] <= 24)].shape[0]
-    selesai_setelah_hari_h_visit = df_visit_filtered[(df_visit_filtered["Status"] == "Visited") & (df_visit_filtered["Durasi (Jam)"] > 24)].shape[0]
+    total_visit, selesai_hari_h_visit, selesai_setelah_hari_h_visit, not_visited = calculate_visit_metrics(df_visit_filtered)
+
 
     # Tampilkan metrik
     col1, col2, col3, col4 = st.columns(4)
@@ -401,15 +407,7 @@ def render_tab_activity(df_efftime_filtered, support_filter):
                 lambda x: x if show_negative else max(x,timedelta(0))
             )
 
-            df_valid["Schedule Date"] = pd.to_datetime(df_valid["Schedule Date"], errors='coerce').dt.date
-            df_valid["Duration"] = pd.to_timedelta(df_valid["Duration"], errors='coerce')
-
-            total_days = df_valid["Schedule Date"].nunique()
-            standard_duration = 9
-            total_duration = df_valid["Duration"].sum()
-            total_eff_hours = total_duration.total_seconds() / 3600 if pd.notnull(total_duration) else 0
-            total_duration_hours = total_days * standard_duration
-            total_un_eff_hours = total_duration_hours - total_eff_hours
+            total_days, total_eff_hours, total_un_eff_hours = calculate_efftime_metrics(df_efftime_filtered, support_filter)
             if not show_negative:
                 total_un_eff_hours = max(0, total_un_eff_hours)
 
@@ -662,31 +660,18 @@ def render_tab_response_time(df_filtered, support_filter):
 def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
     st.markdown("## 🧠 Ringkasan Interaksi")
 
-    # Ambil response time dari session_state jika ada
-    df_response_time_all = df_response_time
+    # Hitung jumlah chat dari df_response_time (sudah difilter sebelumnya)
+    jumlah_chat = df_response_time["Created"].count() if df_response_time is not None and "Created" in df_response_time.columns else 0
 
-    if df_response_time_all is None or df_response_time_all.empty:
-        st.warning("Data response time tidak tersedia.")
-        return
-
-    if "Created" in df_response_time_all.columns:
-        jumlah_chat = df_response_time_all["Created"].count()
-    else:
-        jumlah_chat = 0
+    # Jumlah hari aktif
+    n_days = df_interaksi_filtered["Created"].nunique()
+    avg_per_day = (len(df_interaksi_filtered) + jumlah_chat) / n_days if n_days > 0 else 0
 
     # Metrik Utama
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Interaksi", len(df_interaksi_filtered) + jumlah_chat)
     col2.metric("Jumlah Agent", df_interaksi_filtered["Assign To"].dropna().nunique())
-    avg_per_day = (df_interaksi_filtered.groupby("Created").size().sum() + jumlah_chat) / df_interaksi_filtered["Created"].nunique()
     col3.metric("Rata-rata Interaksi / Hari", f"{avg_per_day:.0f}")
-
-    # Hitung jumlah chat dari response time
-    if "Created" in df_response_time_all.columns:
-        jumlah_chat = df_response_time_all["Created"].count()
-    else:
-        jumlah_chat = 0
-        st.warning("Kolom 'Created' tidak tersedia di data response time.")
 
     # Interaksi per Divisi
     divisi_counts = df_interaksi_filtered["Interaction"].value_counts().reset_index()
@@ -697,12 +682,8 @@ def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
     cols = st.columns(3)
 
     emoji_map = {
-        "Support": "🛠️",
-        "Admin": "🧾",
-        "BC": "📞",
-        "Careline": "💬",
-        "Custcare": "🫶",
-        "Client": "👥",
+        "Support": "🛠️", "Admin": "🧾", "BC": "📞",
+        "Careline": "💬", "Custcare": "🫶", "Client": "👥"
     }
 
     for i, row in enumerate(divisi_counts.itertuples()):
@@ -741,6 +722,7 @@ GOOGLE_SHEET_LINKS = {
         "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
         "csat": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
         "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
+        "interaction": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=INTERACTION",
     },
     "ADMIN": {
         "ticket": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
@@ -764,7 +746,7 @@ elif selected_sheet == "CARELINE":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
     df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
     df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
-    st.session_state["df_response_time"] = df_goapp
+
 # ⬇️ ADMIN
 elif selected_sheet == "ADMIN":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
@@ -773,7 +755,7 @@ elif selected_sheet == "ADMIN":
 elif selected_sheet == "CUSTCARE":
     df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
-
+    df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
 # ===============================
 # 🧹 PARSING & VALIDASI DATA
 # ===============================
@@ -1021,7 +1003,7 @@ elif selected_sheet == "CARELINE":
 elif selected_sheet == "ADMIN":
     tab_labels = ["📄 Data Tiket", "⭐ Data CSAT"]
 else:  # CUSTCARE
-    tab_labels = ["📄 Data Tiket", "⏱️ Response Time", "⭐ Data CSAT"]
+    tab_labels = ["📄 Data Tiket", "⏱️ Response Time", "⭐ Data CSAT", "🗣️ Data Interaksi"]
 
 if "last_filter" not in st.session_state:
     st.session_state.last_filter = (selected_sheet, start_date, end_date, support_filter)
@@ -1060,9 +1042,8 @@ for i, tab in enumerate(tabs):
         elif label == "⏱️ Activity" and selected_sheet == "SUPPORT":
             render_tab_activity(df_efftime_filtered, support_filter)
 
-        elif label == "🗣️ Data Interaksi" and selected_sheet == "CARELINE":
-            df_response_time = st.session_state.get("df_response_time", pd.DataFrame())
-            render_tab_interaksi(df_interaksi_filtered, df_response_time)
+        elif label == "🗣️ Data Interaksi" and selected_sheet in ["CARELINE", "CUSTCARE"]:
+            render_tab_interaksi(df_interaksi_filtered, df_goapp_filtered)
 
 # 🔄 Tombol Refresh
 if st.button("🔄 Refresh Data"):
