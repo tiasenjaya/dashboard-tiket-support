@@ -530,6 +530,7 @@ def render_tab_csat(df_csat_filtered, support_filter):
 def render_tab_response_time(df_filtered, support_filter):
     st.title("⏱️ Analisis Response Time")
 
+    # Validasi awal
     if df_filtered is None or df_filtered.empty:
         st.warning("Data kosong. Silakan atur filter tanggal atau agent.")
         return
@@ -541,8 +542,16 @@ def render_tab_response_time(df_filtered, support_filter):
         st.warning("Tidak ada data untuk agent dan filter waktu yang dipilih.")
         return
 
-    # Format timedelta ke string
-    def format_td(td):
+    # Pastikan tipe data benar
+    df_filtered = df_filtered.copy()
+    df_filtered["First Response Time"] = pd.to_timedelta(df_filtered["First Response Time"], errors="coerce")
+    df_filtered["Total Open Time"] = pd.to_timedelta(df_filtered["Total Open Time"], errors="coerce")
+
+    # =========================
+    # Formatter waktu
+    # =========================
+    def format_total(td):
+        """Format untuk TOTAL (pakai Days/Hours/Minutes)."""
         if pd.isnull(td):
             return "-"
         total_seconds = int(td.total_seconds())
@@ -551,108 +560,118 @@ def render_tab_response_time(df_filtered, support_filter):
         minutes = (total_seconds % 3600) // 60
         return f"{days} Days {hours} Hours {minutes} Minutes"
 
+    def format_hhmmss(td):
+        """Format untuk AVERAGE dengan satuan Hours, Minutes, Seconds."""
+        if pd.isnull(td):
+            return "-"
+        secs = int(td.total_seconds())
+        hours = secs // 3600
+        minutes = (secs % 3600) // 60
+        seconds = secs % 60
+        return f"{hours} Hours, {minutes} Minutes, {seconds} Seconds"
+
     # ================================
     # ⏳ Periode & Jumlah Chat
     # ================================
-    st.markdown(f"📆 **Periode:** {df_filtered['Created'].min().date()} s.d {df_filtered['Created'].max().date()}")
+    st.markdown(
+        f"📆 **Periode:** {df_filtered['Created'].min().date()} s.d {df_filtered['Created'].max().date()}"
+    )
     st.markdown(f"<b>Jumlah Chat:</b> {len(df_filtered)}", unsafe_allow_html=True)
 
     # ================================
-    # 📊 Ringkasan Waktu
+    # 📊 Ringkasan Waktu (TOTAL & AVG)
     # ================================
-    total_first_response = df_filtered["First Response Time"].sum()
-    avg_first_response = df_filtered["First Response Time"].mean()
-    total_open_time = df_filtered["Total Open Time"].sum()
-    avg_open_time = df_filtered["Total Open Time"].mean()
+    # Untuk perhitungan, nilai NaT dianggap 0 detik (ikut rata-rata seperti di pivot)
+    fr_seconds = df_filtered["First Response Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
+    open_seconds = df_filtered["Total Open Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
+
+    total_first_response = pd.to_timedelta(fr_seconds.sum(), unit="s")
+    total_open_time = pd.to_timedelta(open_seconds.sum(), unit="s")
+
+    count_rows = len(df_filtered)
+    avg_first_response = pd.to_timedelta(fr_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
+    avg_open_time = pd.to_timedelta(open_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
 
     st.markdown("### 📈 Ringkasan Waktu")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("🕐 Total First Response")
-        st.success(format_td(total_first_response))
+        st.success(format_total(total_first_response))
         st.subheader("🕒 Total Open Time")
-        st.info(format_td(total_open_time))
+        st.info(format_total(total_open_time))
     with col2:
         st.subheader("⏱️ Rata-rata First Response")
-        st.success(format_td(avg_first_response))
+        st.success(format_hhmmss(avg_first_response))
         st.subheader("📊 Rata-rata Open Time")
-        st.info(format_td(avg_open_time))
+        st.info(format_hhmmss(avg_open_time))
 
     st.markdown("---")
 
-    # ================================
-    # 📋 Ringkasan per Agent
-    # ================================
+    # ==============================
+    # 📊 Ringkasan per Agent
+    # ==============================
     df_eval = df_filtered.copy()
     df_eval["Assign To"] = df_eval["Assign To"].astype(str).str.strip().str.title()
 
-    df_eval = (
-        df_eval.groupby("Assign To")[["First Response Time", "Total Open Time"]]
-        .agg(["mean", "sum"])
-    )
-    df_eval.columns = ["Avg First", "Total First", "Avg Open", "Total Open"]
-    df_eval = df_eval.reset_index()
+    # Biarkan nilai kosong menjadi 0 detik (ikut rata-rata)
+    df_eval["fr_seconds"] = df_eval["First Response Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
+    df_eval["open_seconds"] = df_eval["Total Open Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
 
-    # ================================
-    # ⚡ Tentukan agent tercepat dan terlambat
-    # ================================
-    fastest, slowest = "-", "-"
-    try:
-        # Buat kolom bantu dengan nilai detik total untuk perbandingan lebih aman
-        df_eval["_avg_first_secs"] = df_eval["Avg First"].dt.total_seconds()
-        df_eval["_total_first_secs"] = df_eval["Total First"].dt.total_seconds()
+    # Group by agent
+    df_grouped = df_eval.groupby("Assign To").agg(
+        total_fr=("fr_seconds", "sum"),
+        total_open=("open_seconds", "sum"),
+        count=("Assign To", "count")
+    ).reset_index()
 
-        sort_criteria = ["_avg_first_secs", "_total_first_secs", "Assign To"]
-        sorted_eval = df_eval.sort_values(by=sort_criteria, ascending=[True, True, True])
+    # Rata-rata = total detik / jumlah tiket (termasuk yang 0 detik)
+    df_grouped["avg_fr"] = df_grouped["total_fr"] / df_grouped["count"]
+    df_grouped["avg_open"] = df_grouped["total_open"] / df_grouped["count"]
 
+    # Simpan kolom detik untuk cari fastest/slowest
+    df_grouped["_avg_first_secs"] = df_grouped["avg_fr"].astype(float)
+    df_grouped["_total_first_secs"] = df_grouped["total_fr"].astype(float)
 
-        # Ambil nilai terkecil (detik) untuk Avg First
-        min_avg = df_eval["_avg_first_secs"].min()
+    # Konversi ke timedelta untuk display
+    df_grouped["Total First"] = pd.to_timedelta(df_grouped["total_fr"], unit="s")
+    df_grouped["Total Open"] = pd.to_timedelta(df_grouped["total_open"], unit="s")
+    df_grouped["Avg First"] = pd.to_timedelta(df_grouped["avg_fr"], unit="s")
+    df_grouped["Avg Open"] = pd.to_timedelta(df_grouped["avg_open"], unit="s")
 
-        # Ambil kandidat tercepat (dengan toleransi 60 detik)
-        fastest_candidates = df_eval[df_eval["_avg_first_secs"] <= min_avg + 60]
+    # Tentukan agent tercepat & terlambat berdasar avg (termasuk 0 detik)
+    fastest_row = df_grouped.sort_values(["_avg_first_secs", "Assign To"]).iloc[0]
+    slowest_row = df_grouped.sort_values(["_avg_first_secs", "Assign To"], ascending=[False, True]).iloc[0]
 
-        # Jika hanya satu kandidat → langsung pakai
-        if len(fastest_candidates) == 1:
-            fastest = fastest_candidates.iloc[0]["Assign To"]
-        else:
-            # Jika banyak kandidat, ambil dengan Total First terkecil
-            fastest = fastest_candidates.sort_values("_total_first_secs").iloc[0]["Assign To"]
-
-        # Agent terlambat tetap seperti biasa
-        slowest = df_eval.sort_values(["Avg First", "Assign To"], ascending=[False, False]).iloc[0]["Assign To"]
-    except Exception as e:
-        st.warning(f"Gagal melakukan evaluasi agent tercepat: {e}")
-
-    # ================================
-    # 📊 Tampilkan Ringkasan per Agent
-    # ================================
-    df_display = df_eval.copy()
-    for col in ["Avg First", "Total First", "Avg Open", "Total Open"]:
-        df_display[col] = df_display[col].apply(format_td)
-
-    df_display = df_display.drop(columns=["_avg_first_secs", "_total_first_secs"])
+    # Tabel tampil: Avg = HH:MM:SS, Total = Days/Hours/Minutes
+    df_display = df_grouped[["Assign To", "Total First", "Total Open", "Avg First", "Avg Open"]].copy()
+    df_display["Total First"] = df_display["Total First"].apply(format_total)
+    df_display["Total Open"] = df_display["Total Open"].apply(format_total)
+    df_display["Avg First"] = df_display["Avg First"].apply(format_hhmmss)
+    df_display["Avg Open"] = df_display["Avg Open"].apply(format_hhmmss)
 
     st.markdown("### 📊 Ringkasan per Agent")
     st.dataframe(
-        df_display.style.highlight_max(
-            axis=0, subset=["Avg First", "Avg Open"], color="lightcoral"
-        )
+        df_display.style.highlight_max(axis=0, subset=["Avg First", "Avg Open"], color="lightcoral")
     )
 
-    # ================================
-    # 🔽 Tampilkan nama agent tercepat dan terlambat
-    # ================================
-    st.markdown(f"🔵 Agent tercepat: <b>{fastest}</b>", unsafe_allow_html=True)
-    st.markdown(f"🐢 Agent terlambat: <b>{slowest}</b>", unsafe_allow_html=True)
+    col_f, col_s = st.columns(2)
+    with col_f:
+        st.metric("🚀 Fastest Agent", fastest_row["Assign To"], delta=format_hhmmss(pd.to_timedelta(fastest_row["_avg_first_secs"], unit="s")))
+    with col_s:
+        st.metric("🐢 Slowest Agent", slowest_row["Assign To"], delta=format_hhmmss(pd.to_timedelta(slowest_row["_avg_first_secs"], unit="s")))
+
     st.markdown("---")
 
-    # === Data detail ===
-    with st.expander("📋 Lihat Data Detail"):
+    # === Data detail (urut menurut FR naik) ===
+    with st.expander("📄 Lihat Data Detail"):
         display_df = df_filtered[["Created", "Assign To", "First Response Time", "Total Open Time"]].copy()
-        display_df["First Response Time"] = display_df["First Response Time"].apply(format_td)
-        display_df["Total Open Time"] = display_df["Total Open Time"].apply(format_td)
+        display_df["First Response Time"] = display_df["First Response Time"].fillna(pd.Timedelta(0))
+        display_df["Total Open Time"] = display_df["Total Open Time"].fillna(pd.Timedelta(0))
+        display_df["First Response Time (Avg View)"] = display_df["First Response Time"].apply(format_hhmmss)
+        display_df["Total Open Time (Avg View)"] = display_df["Total Open Time"].apply(format_hhmmss)
+        display_df = display_df.sort_values("First Response Time")
         st.dataframe(display_df)
+
 
 # ===============================
 #🗣️ TAB: Interaksi Careline
