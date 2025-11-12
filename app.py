@@ -546,6 +546,11 @@ def render_tab_response_time(df_filtered, support_filter):
     df_filtered = df_filtered.copy()
     df_filtered["First Response Time"] = pd.to_timedelta(df_filtered["First Response Time"], errors="coerce")
     df_filtered["Total Open Time"] = pd.to_timedelta(df_filtered["Total Open Time"], errors="coerce")
+    # Kolom Average Reply bisa beda nama / tidak selalu ada → deteksi aman
+    avg_reply_candidates = ["Average Reply", "Avg Reply", "Average Reply Time"]
+    avg_reply_col = next((c for c in avg_reply_candidates if c in df_filtered.columns), None)
+    if avg_reply_col:
+        df_filtered[avg_reply_col] = pd.to_timedelta(df_filtered[avg_reply_col], errors="coerce")
 
     # =========================
     # Formatter waktu
@@ -582,15 +587,24 @@ def render_tab_response_time(df_filtered, support_filter):
     # 📊 Ringkasan Waktu (TOTAL & AVG)
     # ================================
     # Untuk perhitungan, nilai NaT dianggap 0 detik (ikut rata-rata seperti di pivot)
-    fr_seconds = df_filtered["First Response Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
+    fr_seconds   = df_filtered["First Response Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
     open_seconds = df_filtered["Total Open Time"].fillna(pd.Timedelta(0)).dt.total_seconds()
 
-    total_first_response = pd.to_timedelta(fr_seconds.sum(), unit="s")
-    total_open_time = pd.to_timedelta(open_seconds.sum(), unit="s")
+    total_first_response = pd.to_timedelta(fr_seconds.sum(),   unit="s")
+    total_open_time      = pd.to_timedelta(open_seconds.sum(), unit="s")
 
     count_rows = len(df_filtered)
-    avg_first_response = pd.to_timedelta(fr_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
-    avg_open_time = pd.to_timedelta(open_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
+    avg_first_response = pd.to_timedelta(fr_seconds.sum()   / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
+    avg_open_time      = pd.to_timedelta(open_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
+
+    # Hanya hitung Average Reply jika kolomnya ada
+    if 'avg_reply_col' in locals() and avg_reply_col:
+        reply_seconds    = df_filtered[avg_reply_col].fillna(pd.Timedelta(0)).dt.total_seconds()
+        total_avg_reply  = pd.to_timedelta(reply_seconds.sum(), unit="s")
+        avg_reply_time   = pd.to_timedelta(reply_seconds.sum() / count_rows, unit="s") if count_rows > 0 else pd.Timedelta(0)
+    else:
+        total_avg_reply = None
+        avg_reply_time  = None
 
     st.markdown("### 📈 Ringkasan Waktu")
     col1, col2 = st.columns(2)
@@ -604,6 +618,18 @@ def render_tab_response_time(df_filtered, support_filter):
         st.success(format_hhmmss(avg_first_response))
         st.subheader("📊 Rata-rata Open Time")
         st.info(format_hhmmss(avg_open_time))
+
+    # Tampilkan kartu Average Reply hanya jika kolomnya ada
+    if avg_reply_time is not None:
+        col3, col4 = st.columns(2)
+        with col3:
+            st.subheader("💬 Total Average Reply")
+            st.info(format_total(total_avg_reply))
+        with col4:
+            st.subheader("🧮 Rata-rata Average Reply")
+            st.success(format_hhmmss(avg_reply_time))
+    else:
+        st.caption("ℹ️ Kolom **Average Reply** tidak ditemukan pada sheet ini, jadi metriknya disembunyikan.")
 
     st.markdown("---")
 
@@ -898,7 +924,7 @@ elif filter_mode == "Per Tahun":
         start_date = datetime.datetime(selected_year, min(selected_month_numbers), 1)
         end_date = datetime.datetime(selected_year, max(selected_month_numbers), monthrange(selected_year, max(selected_month_numbers))[1], 23, 59, 59)
 
-# 👤 Pilih Agent
+# 👤 Pilih Agent (MULTI + opsi "All")
 df_sources = [df, df_csat, df_goapp, df_efftime, df_interaksi]
 assign_to_combined = pd.concat(
     [d[["Assign To"]] for d in df_sources if d is not None and "Assign To" in d.columns],
@@ -906,12 +932,25 @@ assign_to_combined = pd.concat(
 )
 assign_to_combined["Assign To"] = assign_to_combined["Assign To"].astype(str).str.strip()
 
-# Ambil daftar agent unik
+# Daftar agent unik
 if not assign_to_combined.empty:
     support_options = sorted(assign_to_combined["Assign To"].dropna().unique().tolist())
-    support_filter = st.sidebar.selectbox("👤 Pilih Agent:", ["All"] + support_options)
+    agent_options = ["All"] + support_options
+    # default hanya "All" supaya tidak memenuhi sidebar dengan chip agent
+    selected_raw = st.sidebar.multiselect("👤 Pilih Agent:", options=agent_options, default=["All"],
+                                          help="Pilih 'All' untuk semua agent, atau kosongkan untuk kembali ke 'All'.")
 else:
-    support_filter = "All"
+    support_options = []
+    selected_raw = ["All"]
+
+# Normalisasi pilihan:
+# - Jika "All" dipilih ATAU user tidak pilih apa pun → gunakan semua agent
+# - Selain itu → gunakan daftar yang dipilih (kecuali string "All")
+use_all = ("All" in selected_raw) or (len(selected_raw) == 0)
+selected_agents = support_options if use_all else [a for a in selected_raw if a != "All"]
+
+# Kompatibilitas variabel lama utk fungsi2 yang masih cek "All"
+support_filter = selected_agents[0] if len(selected_agents) == 1 else "All"
 
 
 # ⚙️ Pilih Service (jika tersedia)
@@ -938,8 +977,8 @@ if start_date and end_date and "Created" in df_filtered.columns:
 if filter_mode == "Per Tahun" and "Created" in df_filtered.columns and 'selected_month_numbers' in locals():
     df_filtered = df_filtered[df_filtered["Created"].dt.month.isin(selected_month_numbers)]
 
-if support_filter != "All" and "Assign To" in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered["Assign To"] == support_filter]
+if "Assign To" in df_filtered.columns and selected_agents:
+    df_filtered = df_filtered[df_filtered["Assign To"].isin(selected_agents)]
 
 if layanan != "All" and "Services" in df_filtered.columns:
     df_filtered = df_filtered[df_filtered["Services"] == layanan]
@@ -954,8 +993,9 @@ if start_date and end_date and "Created" in df_csat_filtered.columns:
         (df_csat_filtered["Created"] >= start_date) &
         (df_csat_filtered["Created"] <= end_date)
     ]
-if support_filter != "All" and "Assign To" in df_csat_filtered.columns:
-    df_csat_filtered = df_csat_filtered[df_csat_filtered["Assign To"] == support_filter]
+if "Assign To" in df_csat_filtered.columns and selected_agents:
+    df_csat_filtered = df_csat_filtered[df_csat_filtered["Assign To"].isin(selected_agents)]
+
 
 # ===============================
 # 🧼 Filtering Data GOAPP
@@ -967,8 +1007,8 @@ if start_date and end_date and "Created" in df_goapp_filtered.columns:
         (df_goapp_filtered["Created"] >= start_date) &
         (df_goapp_filtered["Created"] <= end_date)
     ]
-if support_filter != "All" and "Assign To" in df_goapp_filtered.columns:
-    df_goapp_filtered = df_goapp_filtered[df_goapp_filtered["Assign To"] == support_filter]
+if "Assign To" in df_goapp_filtered.columns and selected_agents:
+    df_goapp_filtered = df_goapp_filtered[df_goapp_filtered["Assign To"].isin(selected_agents)]
 
 # ===============================
 # 🧼 Filtering Data Visit
@@ -980,8 +1020,8 @@ if start_date and end_date and "Schedule Date" in df_visit_filtered.columns:
         (df_visit_filtered["Schedule Date"] >= start_date) &
         (df_visit_filtered["Schedule Date"] <= end_date)
     ]
-if support_filter != "All" and "Assign To" in df_visit_filtered.columns:
-    df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"] == support_filter]
+if "Assign To" in df_visit_filtered.columns and selected_agents:
+    df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"].isin(selected_agents)]
 
 # ===============================
 # 🧼 Filtering Data Activity
@@ -993,8 +1033,8 @@ if start_date and end_date and "Schedule Date" in df_efftime_filtered.columns:
         (df_efftime_filtered["Schedule Date"] >= start_date) &
         (df_efftime_filtered["Schedule Date"] <= end_date)
     ]
-if support_filter != "All" and "Assign To" in df_efftime_filtered.columns:
-    df_efftime_filtered = df_efftime_filtered[df_efftime_filtered["Assign To"] == support_filter]
+if "Assign To" in df_efftime_filtered.columns and selected_agents:
+    df_efftime_filtered = df_efftime_filtered[df_efftime_filtered["Assign To"].isin(selected_agents)]
 
 # ===============================
 # Filtering Data Interaksi
@@ -1007,9 +1047,9 @@ if start_date and end_date and "Created" in df_interaksi_filtered.columns:
         (df_interaksi_filtered["Created"] <= end_date)
     ]
 
-if support_filter != "All" and "Assign To" in df_interaksi_filtered.columns:
+if "Assign To" in df_interaksi_filtered.columns and selected_agents:
     df_interaksi_filtered = df_interaksi_filtered[
-        df_interaksi_filtered["Assign To"] == support_filter
+        df_interaksi_filtered["Assign To"].isin(selected_agents)
     ]
 
 # ===============================
