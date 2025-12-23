@@ -1,5 +1,7 @@
 #Import dan set up awal
 import streamlit as st
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -23,7 +25,7 @@ def load_data(url):
 
 def filter_by_date(df, date_col, start_date, end_date):
     if date_col in df.columns and start_date and end_date:
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
         return df[(df[date_col] >= start_date) & (df[date_col] <= end_date)]
     return df
 
@@ -40,6 +42,23 @@ def calculate_ticket_metrics(df):
     belum_selesai = len(df[df["Status"] != "Finish"]) if "Status" in df.columns else 0
     avg_durasi = df["Durasi (Jam)"].mean() if "Durasi (Jam)" in df.columns else None
     return total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi
+
+def calculate_admin_kpi_metrics(df, sla_hours=48):
+    if df is None or df.empty:
+        return 0, 0, 0, 0, None
+
+    total = len(df)
+
+    finished_mask = df["Finish"].notna() if "Finish" in df.columns else pd.Series([False]*len(df), index=df.index)
+    unfinished = int((~finished_mask).sum())
+
+    dur = pd.to_numeric(df.loc[finished_mask, "Durasi (Jam)"], errors="coerce") if "Durasi (Jam)" in df.columns else pd.Series([], dtype=float)
+
+    ontime = int(dur.le(sla_hours).sum()) if not dur.empty else 0
+    late   = int(dur.gt(sla_hours).sum()) if not dur.empty else 0
+    avg    = float(dur.mean()) if dur.notna().any() else None
+
+    return total, ontime, late, unfinished, avg
 
 # =========================
 # 🗓️ Visit Metrics
@@ -100,10 +119,23 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
     if avg_durasi:
         st.metric("🕒 Rata-rata Durasi Pengerjaan", f"{avg_durasi:.2f} Jam")
 
+    # === Audit: delay setelah dev ===
+    if "After_Dev (Jam)" in df_filtered.columns:
+        dev_done = df_filtered[df_filtered["After_Dev (Jam)"].notna()].copy()
+        total_dev_done = len(dev_done)
+        avg_after_dev = dev_done["After_Dev (Jam)"].mean() if total_dev_done > 0 else 0
+        after_dev_gt_24 = (dev_done["After_Dev (Jam)"] > 24).sum() if total_dev_done > 0 else 0
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🧑‍💻 Tiket Repaired (Dev Done)", total_dev_done)
+        c2.metric("⏳ Avg Delay After Dev", f"{avg_after_dev:.2f} Jam")
+        c3.metric("⚠️ Delay After Dev > 24 Jam", after_dev_gt_24)
+
+
     st.subheader("📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
     if not df_filtered.empty:
         # Step 1: Pastikan kolom Created sudah datetime
-        df_filtered["Created"] = pd.to_datetime(df_filtered["Created"], errors="coerce")
+        df_filtered["Created"] = pd.to_datetime(df_filtered["Created"], errors="coerce", dayfirst=True)
 
         # Step 2: Buat kolom hanya tanggal saja untuk grouping
         df_filtered["Created_Date"] = df_filtered["Created"].dt.date  # ← penting!
@@ -227,13 +259,95 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             menit = (total_detik % 3600) // 60
             detik = total_detik % 60
             return f"{jam} Jam {menit} Menit {detik} Detik"
+        if "After_Dev (Jam)" in df_display.columns:
+            df_display["After_Dev (Jam)"] = df_display["After_Dev (Jam)"].apply(format_durasi)
+
 
         df_display["Durasi (Jam)"] = df_display["Durasi (Jam)"].apply(format_durasi)
         display_columns = [
-            "Ticket Number", "Created", "Finish", "Assign To", 
-            "Services", "Status", "Durasi (Jam)"]
+            "Ticket Number", "Created", "On Progress Date", "Repaired Ticket Date", "Finish",
+            "Assign To", "Services", "Status", "Durasi (Jam)", "After_Dev (Jam)"
+        ]
         available_cols = [col for col in display_columns if col in df_display.columns]
         st.dataframe(df_display[available_cols])
+
+def render_tab_admin_kpi(df_admin_kpi_filtered, sla_hours=48):
+    st.title("📊 ADMIN KPI DASHBOARD")
+    st.subheader(f"📌 SLA Semua TAG: ≤ {sla_hours} Jam")
+
+    if df_admin_kpi_filtered is None or df_admin_kpi_filtered.empty:
+        st.warning("Data ADMIN KPI kosong setelah filter.")
+        return
+
+    # Filter TAG
+    tag_col = "TAG"
+    tags = sorted(df_admin_kpi_filtered[tag_col].dropna().astype(str).unique().tolist()) if tag_col in df_admin_kpi_filtered.columns else []
+    selected_tags = st.multiselect("🏷️ Filter TAG", options=["All"] + tags, default=["All"])
+
+    dfk = df_admin_kpi_filtered.copy()
+    if "All" not in selected_tags and tag_col in dfk.columns:
+        dfk = dfk[dfk[tag_col].astype(str).isin(selected_tags)]
+
+    total, ontime, late, unfinished, avg = calculate_admin_kpi_metrics(dfk, sla_hours=sla_hours)
+
+    progress = total - unfinished
+    pct = (progress / total * 100) if total else 0
+    st.progress(pct / 100)
+    st.success(f"✅ {pct:.2f}% selesai dari total {total} pekerjaan.")
+
+    completed = total - unfinished
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("📦 Total Pekerjaan", total)
+    c2.metric("✅ Selesai", completed)
+    c3.metric(f"✅ Selesai ≤ {sla_hours} Jam", ontime)
+    c4.metric(f"⛔ Selesai > {sla_hours} Jam", late)
+    c5.metric("⏳ Belum Selesai", unfinished)
+
+    if avg is not None:
+        st.metric("🕒 Rata-rata Durasi", f"{avg:.2f} Jam")
+
+    # Breakdown per TAG
+    if tag_col in dfk.columns and "Durasi (Jam)" in dfk.columns:
+        tmp = dfk.copy()
+        tmp["Durasi (Jam)"] = pd.to_numeric(tmp["Durasi (Jam)"], errors="coerce")
+        tmp_finished = tmp[tmp["Finish"].notna()]
+
+        if not tmp_finished.empty:
+            by_tag = tmp_finished.groupby(tag_col).agg(
+                Total=("Ticket Number", "count"),
+                Ontime=("Durasi (Jam)", lambda x: (x <= sla_hours).sum()),
+                Late=("Durasi (Jam)", lambda x: (x > sla_hours).sum()),
+                Avg_Durasi=("Durasi (Jam)", "mean"),
+            ).reset_index()
+            by_tag["Ontime_%"] = (by_tag["Ontime"] / by_tag["Total"] * 100).round(2)
+
+            st.subheader("🏷️ KPI per TAG")
+            st.dataframe(by_tag.sort_values(["Ontime_%", "Total"], ascending=[False, False]))
+
+    # Breakdown per Agent
+    if "Assign To" in dfk.columns and "Durasi (Jam)" in dfk.columns:
+        tmp = dfk.copy()
+        tmp["Durasi (Jam)"] = pd.to_numeric(tmp["Durasi (Jam)"], errors="coerce")
+        tmp_finished = tmp[tmp["Finish"].notna()]
+
+        if not tmp_finished.empty:
+            by_agent = tmp_finished.groupby("Assign To").agg(
+                Total=("Ticket Number", "count"),
+                Ontime=("Durasi (Jam)", lambda x: (x <= sla_hours).sum()),
+                Late=("Durasi (Jam)", lambda x: (x > sla_hours).sum()),
+                Avg_Durasi=("Durasi (Jam)", "mean"),
+            ).reset_index()
+            by_agent["Ontime_%"] = (by_agent["Ontime"] / by_agent["Total"] * 100).round(2)
+
+            st.subheader("👤 KPI per Admin (Assign To)")
+            st.dataframe(by_agent.sort_values(["Ontime_%", "Total"], ascending=[False, False]))
+
+    # Data detail
+    with st.expander("📋 Data detail (setelah filter)"):
+        show_cols = [c for c in ["Ticket Number", "Created", "Finish", "Assign To", "TAG", "Durasi (Jam)"] if c in dfk.columns]
+        st.dataframe(dfk[show_cols])
+
 
 # ===============================
 # 🗓️ TAB: Data Visit (SUPPORT)
@@ -749,7 +863,6 @@ def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
 # 📥 Load Data Berdasarkan Sheet
 # ===============================
 # **📄 Konfigurasi Layout**
-st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 #Inisialisasi & Pemanggilan Data Sheet
 GOOGLE_SHEET_LINKS = {
     "SUPPORT": {
@@ -770,16 +883,18 @@ GOOGLE_SHEET_LINKS = {
         "interaction": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=INTERACTION",
     },
     "ADMIN": {
-        "ticket": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
+        "admin_kpi": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=New DB",
         "csat": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
     }
 }
 
 sheet_names = list(GOOGLE_SHEET_LINKS.keys())
 selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
-df = load_data(GOOGLE_SHEET_LINKS[selected_sheet]["ticket"])
+df = pd.DataFrame()
+if selected_sheet in ["SUPPORT", "CARELINE", "CUSTCARE"]:
+    df = load_data(GOOGLE_SHEET_LINKS[selected_sheet]["ticket"])
 
-df_visit = df_csat = df_goapp = df_efftime = df_interaksi = None
+df_visit = df_csat = df_goapp = df_efftime = df_interaksi = df_admin_kpi = None
 
 # ⬇️ SUPPORT
 if selected_sheet == "SUPPORT":
@@ -795,12 +910,14 @@ elif selected_sheet == "CARELINE":
 # ⬇️ ADMIN
 elif selected_sheet == "ADMIN":
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
+    df_admin_kpi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("admin_kpi", ""))
 
 # ⬇️ CUSTCARE
 elif selected_sheet == "CUSTCARE":
     df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
     df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
     df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
+
 # ===============================
 # 🧹 PARSING & VALIDASI DATA
 # ===============================
@@ -809,10 +926,44 @@ if "Created" in df.columns:
     df["Created Display"] = df["Created"].dt.strftime("%d/%m/%Y %H:%M:%S")
     df["Created_Date"] = df["Created"].dt.date
 
+# kolom baru (opsional, tapi dipakai kalau ada)
+if "On Progress Date" in df.columns:
+    df["On Progress Date"] = pd.to_datetime(df["On Progress Date"], errors="coerce", dayfirst=True)
+
+if "Repaired Ticket Date" in df.columns:
+    df["Repaired Ticket Date"] = pd.to_datetime(df["Repaired Ticket Date"], errors="coerce", dayfirst=True)
+
 if "Finish" in df.columns:
     df["Finish"] = pd.to_datetime(df["Finish"], errors="coerce", dayfirst=True)
     df["Finish Display"] = df["Finish"].dt.strftime("%d/%m/%Y %H:%M:%S")
-    df["Durasi (Jam)"] = (df["Finish"] - df["Created"]).dt.total_seconds() / 3600
+
+    # Total end-to-end (jam)
+    df["Durasi_Total (Jam)"] = (df["Finish"] - df["Created"]).dt.total_seconds() / 3600
+
+    # Dev time (jam) hanya kalau repaired terisi
+    df["Durasi_Dev (Jam)"] = 0.0
+    if "On Progress Date" in df.columns and "Repaired Ticket Date" in df.columns:
+        has_dev = df["On Progress Date"].notna() & df["Repaired Ticket Date"].notna()
+        df.loc[has_dev, "Durasi_Dev (Jam)"] = (
+            (df.loc[has_dev, "Repaired Ticket Date"] - df.loc[has_dev, "On Progress Date"])
+            .dt.total_seconds() / 3600
+        )
+
+    # Safety: kalau ada data aneh (negatif), anggap 0
+    df["Durasi_Dev (Jam)"] = df["Durasi_Dev (Jam)"].clip(lower=0)
+
+    # SLA Support (jam) = total - dev
+    df["Durasi (Jam)"] = (df["Durasi_Total (Jam)"] - df["Durasi_Dev (Jam)"]).clip(lower=0)
+
+    # === Audit internal: Delay setelah Dev selesai sampai Support benar-benar finish ===
+    df["After_Dev (Jam)"] = pd.NA
+    if "Repaired Ticket Date" in df.columns:
+        has_after_dev = df["Repaired Ticket Date"].notna() & df["Finish"].notna()
+        after_dev_hours = (
+            (df.loc[has_after_dev, "Finish"] - df.loc[has_after_dev, "Repaired Ticket Date"])
+            .dt.total_seconds() / 3600
+        )
+        df.loc[has_after_dev, "After_Dev (Jam)"] = after_dev_hours.clip(lower=0)
 
 if df_visit is not None:
     df_visit["Schedule Date"] = pd.to_datetime(df_visit["Schedule Date"], errors='coerce', dayfirst=True)
@@ -840,6 +991,16 @@ if df_goapp is not None:
 if df_interaksi is not None and "Created" in df_interaksi.columns:
     df_interaksi["Created"] = pd.to_datetime(df_interaksi["Created"], errors="coerce", dayfirst=True)
 
+if df_admin_kpi is not None:
+    if "Created" in df_admin_kpi.columns:
+        df_admin_kpi["Created"] = pd.to_datetime(df_admin_kpi["Created"], errors="coerce", dayfirst=True)
+    if "Finish" in df_admin_kpi.columns:
+        df_admin_kpi["Finish"] = pd.to_datetime(df_admin_kpi["Finish"], errors="coerce", dayfirst=True)
+
+    # Durasi dalam JAM (admin KPI pakai ini)
+    if "Created" in df_admin_kpi.columns and "Finish" in df_admin_kpi.columns:
+        df_admin_kpi["Durasi (Jam)"] = (df_admin_kpi["Finish"] - df_admin_kpi["Created"]).dt.total_seconds() / 3600
+
 # ===============================
 # 📊 Sidebar Filter Umum
 # ===============================
@@ -851,9 +1012,9 @@ filter_mode = st.sidebar.radio("🎯 Mode Filter Tanggal", ["Per Hari", "Per Bul
 # ===============================
 df_tanggal_sources = []
 
-for df_source in [df, df_visit, df_efftime, df_csat, df_goapp, df_interaksi]:
+for df_source in [df, df_visit, df_efftime, df_csat, df_goapp, df_interaksi, df_admin_kpi]:
     if df_source is not None and not df_source.empty and "Created" in df_source.columns:
-        df_source["Created"] = pd.to_datetime(df_source["Created"], errors="coerce")
+        df_source["Created"] = pd.to_datetime(df_source["Created"], errors="coerce", dayfirst=True)
         df_valid = df_source[["Created"]].dropna()
         if not df_valid.empty:
             df_tanggal_sources.append(df_valid)
@@ -862,7 +1023,7 @@ df_tanggal = pd.concat(df_tanggal_sources, ignore_index=True) if df_tanggal_sour
 
 # Pastikan tanggal valid
 if "Created" in df_tanggal.columns:
-    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors="coerce")
+    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors="coerce", dayfirst=True)   
     min_date = df_tanggal["Created"].min()
     max_date = df_tanggal["Created"].max()
 else:
@@ -903,7 +1064,7 @@ elif filter_mode == "Per Bulan":
 
 # 📆 Per Tahun (multi-bulan)
 elif filter_mode == "Per Tahun":
-    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors='coerce')
+    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors='coerce', dayfirst=True)
 
     available_years = sorted(df_tanggal["Created"].dropna().dt.year.astype(int).unique())
     selected_year = int(st.sidebar.selectbox("📅 Pilih Tahun", available_years))
@@ -925,7 +1086,7 @@ elif filter_mode == "Per Tahun":
         end_date = datetime.datetime(selected_year, max(selected_month_numbers), monthrange(selected_year, max(selected_month_numbers))[1], 23, 59, 59)
 
 # 👤 Pilih Agent (MULTI + opsi "All")
-df_sources = [df, df_csat, df_goapp, df_efftime, df_interaksi]
+df_sources = [df, df_csat, df_goapp, df_efftime, df_interaksi, df_admin_kpi]
 assign_to_combined = pd.concat(
     [d[["Assign To"]] for d in df_sources if d is not None and "Assign To" in d.columns],
     ignore_index=True
@@ -1053,6 +1214,21 @@ if "Assign To" in df_interaksi_filtered.columns and selected_agents:
     ]
 
 # ===============================
+# Filtering Data Admin
+# ===============================
+df_admin_kpi_filtered = df_admin_kpi.copy() if df_admin_kpi is not None else pd.DataFrame()
+
+if start_date and end_date and "Created" in df_admin_kpi_filtered.columns:
+    df_admin_kpi_filtered = df_admin_kpi_filtered[
+        (df_admin_kpi_filtered["Created"] >= start_date) &
+        (df_admin_kpi_filtered["Created"] <= end_date)
+    ]
+
+if "Assign To" in df_admin_kpi_filtered.columns and selected_agents:
+    df_admin_kpi_filtered = df_admin_kpi_filtered[df_admin_kpi_filtered["Assign To"].isin(selected_agents)]
+
+
+# ===============================
 # 🧭 Penentuan Label Tab Dinamis
 # ===============================
 if selected_sheet == "SUPPORT":
@@ -1060,7 +1236,7 @@ if selected_sheet == "SUPPORT":
 elif selected_sheet == "CARELINE":
     tab_labels = ["📄 Data Tiket", "⭐ Data CSAT", "⏱️ Response Time", "🗣️ Data Interaksi"]
 elif selected_sheet == "ADMIN":
-    tab_labels = ["📄 Data Tiket", "⭐ Data CSAT"]
+    tab_labels = ["📌 KPI Admin", "⭐ Data CSAT"]
 else:  # CUSTCARE
     tab_labels = ["📄 Data Tiket", "⏱️ Response Time", "⭐ Data CSAT", "🗣️ Data Interaksi"]
 
@@ -1085,9 +1261,17 @@ for i, tab in enumerate(tabs):
         label = tab_labels[i]
         st.session_state.active_tab = label
 
-        if label == "📄 Data Tiket":
+        if label == "📌 KPI Admin" and selected_sheet == "ADMIN":
+            render_tab_admin_kpi(df_admin_kpi_filtered, sla_hours=48)
+
+        elif label == "📄 Data Tiket":
+            # BIARIN buat SUPPORT/CARELINE/CUSTCARE
             total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi = calculate_ticket_metrics(df_filtered)
-            render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi, support_filter)
+            render_tab_tiket(
+                df_filtered, layanan, service_options,
+                total_tiket, selesai_24_jam, selesai_lebih_24_jam,
+                belum_selesai, avg_durasi, support_filter
+            )
 
         elif label == "🗓️ Data Visit" and selected_sheet == "SUPPORT":
             render_tab_visit(df_visit_filtered, support_filter)
