@@ -1,7 +1,9 @@
 #Import dan set up awal
 import streamlit as st
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-
+import json
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -9,7 +11,6 @@ import datetime
 import calendar
 from datetime import timedelta
 import re   
-from urllib.parse import quote
 from calendar import monthrange
 
 # =========================
@@ -73,11 +74,59 @@ def robust_parse_datetime(series):
 # =========================
 # 📦 Fungsi Utility Umum
 # =========================
-@st.cache_data
-def load_data(url):
-    from urllib.parse import quote
-    url_encoded = re.sub(r"sheet=([^&]+)", lambda m: f"sheet={quote(m.group(1))}", url)
-    df = pd.read_csv(url_encoded)
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+
+@st.cache_resource
+def _get_sheets_service():
+    sa_info = json.loads(st.secrets["GCP_SA_JSON"])
+    creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+    return build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+def _values_to_df(values, header_row: int = 0) -> pd.DataFrame:
+    if not values or len(values) <= header_row:
+        return pd.DataFrame()
+
+    header = [str(x).strip() if x is not None else "" for x in values[header_row]]
+    rows = values[header_row + 1 :]
+
+    max_cols = len(header)
+    padded = []
+    for r in rows:
+        r = list(r)
+        if len(r) < max_cols:
+            r = r + [None] * (max_cols - len(r))
+        elif len(r) > max_cols:
+            r = r[:max_cols]
+        padded.append(r)
+
+    df = pd.DataFrame(padded, columns=header)
+    df = df.dropna(how="all")
+    return df
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_data(sheet_key: str, dataset_key: str) -> pd.DataFrame:
+    """
+    sheet_key: SUPPORT / CARELINE / CUSTCARE / ADMIN
+    dataset_key: ticket / visit / activity / csat / goapp / interaction / admin_kpi ...
+    """
+    spreadsheet_id = st.secrets["SPREADSHEETS"][sheet_key]
+    range_a1 = st.secrets["RANGES"][sheet_key][dataset_key]
+
+    service = _get_sheets_service()
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(
+            spreadsheetId=spreadsheet_id,
+            range=range_a1,
+            valueRenderOption="UNFORMATTED_VALUE",
+            dateTimeRenderOption="FORMATTED_STRING",
+        )
+        .execute()
+    )
+
+    values = resp.get("values", [])
+    df = _values_to_df(values)
 
     # 1) header normalize (NBSP/spasi dobel) + mapping variasi nama kolom
     df = normalize_columns(df)
@@ -89,6 +138,40 @@ def load_data(url):
 
     return df
 
+@st.cache_data(ttl=900, show_spinner=False)
+def load_many(sheet_key: str, dataset_keys: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    spreadsheet_id = st.secrets["SPREADSHEETS"][sheet_key]
+    ranges = [st.secrets["RANGES"][sheet_key][k] for k in dataset_keys]
+
+    service = _get_sheets_service()
+    resp = (
+        service.spreadsheets()
+        .values()
+        .batchGet(
+            spreadsheetId=spreadsheet_id,
+            ranges=ranges,
+            valueRenderOption="UNFORMATTED_VALUE",
+            dateTimeRenderOption="FORMATTED_STRING",
+        )
+        .execute()
+    )
+
+    out: dict[str, pd.DataFrame] = {}
+    for key, vr in zip(dataset_keys, resp.get("valueRanges", [])):
+        values = vr.get("values", [])
+        df = _values_to_df(values)
+        df = normalize_columns(df)
+        for c in ["TAG", "Assign To", "Services", "Status", "KPI Scope", "Ticket Number"]:
+            if c in df.columns:
+                df[c] = normalize_text_series(df[c])
+        out[key] = df
+
+    # pastikan semua key ada walau range kosong
+    for key in dataset_keys:
+        out.setdefault(key, pd.DataFrame())
+
+    return out
+
 def filter_by_date(df, date_col, start_date, end_date):
     if df is None or df.empty:
         return df
@@ -99,17 +182,37 @@ def filter_by_date(df, date_col, start_date, end_date):
     return df
 
 def filter_by_agent(df, agent):
-    return df if agent == "All" else df[df["Assign To"] == agent]
+    if df is None or df.empty or agent == "All":
+        return df
+    if "Assign To" not in df.columns:
+        return df
+    return df[df["Assign To"] == agent]
 
 # =========================
 # 🎟️ Tiket Metrics
 # =========================
 def calculate_ticket_metrics(df):
-    total_tiket = len(df)
-    selesai_24_jam = len(df[df["Durasi (Jam)"] <= 24])
-    selesai_lebih_24_jam = len(df[df["Durasi (Jam)"] > 24])
-    belum_selesai = len(df[df["Status"] != "Finish"]) if "Status" in df.columns else 0
-    avg_durasi = df["Durasi (Jam)"].mean() if "Durasi (Jam)" in df.columns else None
+    if df is None or df.empty:
+        return 0, 0, 0, 0, None
+
+    total_tiket = int(len(df))
+
+    if "Durasi (Jam)" in df.columns:
+        dur = pd.to_numeric(df["Durasi (Jam)"], errors="coerce")
+        selesai_24_jam = int(dur.le(24).sum())
+        selesai_lebih_24_jam = int(dur.gt(24).sum())
+        avg_durasi = float(dur.mean()) if dur.notna().any() else None
+    else:
+        selesai_24_jam = 0
+        selesai_lebih_24_jam = 0
+        avg_durasi = None
+
+    if "Status" in df.columns:
+        status = normalize_text_series(df["Status"]).fillna("")
+        belum_selesai = int((status != "Finish").sum())
+    else:
+        belum_selesai = 0
+
     return total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi
 
 def calculate_admin_kpi_metrics(df, sla_hours=48):
@@ -383,7 +486,9 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             df_display["After_Dev (Jam)"] = df_display["After_Dev (Jam)"].apply(format_durasi)
 
 
-        df_display["Durasi (Jam)"] = df_display["Durasi (Jam)"].apply(format_durasi)
+        if "Durasi (Jam)" in df_display.columns:
+            df_display["Durasi (Jam)"] = df_display["Durasi (Jam)"].apply(format_durasi)
+
         display_columns = [
             "Ticket Number", "Created", "On Progress Date", "Repaired Ticket Date", "Finish",
             "Assign To", "Services", "Status", "Durasi (Jam)", "After_Dev (Jam)"
@@ -439,21 +544,6 @@ def render_tab_admin_kpi(df_admin_kpi_filtered, sla_hours=48, selected_agents=No
         )
 
     progress_pct = (finished_all / total_all * 100) if total_all > 0 else 0.0
-
-        # --- UI helper khusus ADMIN (biar gak ganggu tab lain) ---
-    def _card(label, value, sub=None):
-        sub_html = f'<div style="font-size:12px;opacity:.7;margin-top:6px;">{sub}</div>' if sub else ""
-        st.markdown(
-            f"""
-            <div style="padding:14px 16px;border:1px solid rgba(49,51,63,.15);
-                        border-radius:14px;background:rgba(255,255,255,.0);">
-            <div style="font-size:13px;opacity:.75;margin-bottom:6px;">{label}</div>
-            <div style="font-size:34px;font-weight:700;line-height:1;">{value}</div>
-            {sub_html}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
     # --- formatter durasi untuk display di tabel detail (JANGAN dipakai buat KPI calc) ---
     def format_durasi_dhm(jam_float):
@@ -797,9 +887,14 @@ def render_tab_activity(df_efftime_filtered, support_filter):
             show_negative = st.checkbox("Tampilkan nilai negatif un-effective time", value=False)
 
             # Perhitungan / pemrosesan nilai negatif
-            df_efftime_filtered["Un-effective Time"] = df_efftime_filtered["Un-effective Time"].apply(
-                lambda x: x if show_negative else max(x,timedelta(0))
-            )
+            def _clamp_td(x):
+                if pd.isna(x):
+                    return x
+                return x if show_negative else max(x, timedelta(0))
+
+            if "Un-effective Time" in df_efftime_filtered.columns:
+                df_efftime_filtered = df_efftime_filtered.copy()
+                df_efftime_filtered["Un-effective Time"] = df_efftime_filtered["Un-effective Time"].apply(_clamp_td)
 
             total_days, total_eff_hours, total_un_eff_hours = calculate_efftime_metrics(df_efftime_filtered, support_filter)
             if not show_negative:
@@ -972,9 +1067,14 @@ def render_tab_response_time(df_filtered, support_filter):
     # ================================
     # ⏳ Periode & Jumlah Chat
     # ================================
-    st.markdown(
-        f"📆 **Periode:** {df_filtered['Created'].min().date()} s.d {df_filtered['Created'].max().date()}"
-    )
+    created = pd.to_datetime(df_filtered.get("Created"), errors="coerce")
+    cmin = created.min()
+    cmax = created.max()
+    if pd.isna(cmin) or pd.isna(cmax):
+        st.markdown("📆 **Periode:** -")
+    else:
+        st.markdown(f"📆 **Periode:** {cmin.date()} s.d {cmax.date()}")
+
     st.markdown(f"<b>Jumlah Chat:</b> {len(df_filtered)}", unsafe_allow_html=True)
 
     # ================================
@@ -1144,59 +1244,31 @@ def render_tab_interaksi(df_interaksi_filtered, df_response_time=None):
 # ===============================
 # **📄 Konfigurasi Layout**
 #Inisialisasi & Pemanggilan Data Sheet
-GOOGLE_SHEET_LINKS = {
-    "SUPPORT": {
-        "ticket": "https://docs.google.com/spreadsheets/d/15DHR0cVyIAORGprLFPPX3CbhtK0NrD1d5mqkurhXeXU/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
-        "visit": "https://docs.google.com/spreadsheets/d/15DHR0cVyIAORGprLFPPX3CbhtK0NrD1d5mqkurhXeXU/gviz/tq?tqx=out:csv&sheet=DATA VISIT",
-        "activity": "https://docs.google.com/spreadsheets/d/15DHR0cVyIAORGprLFPPX3CbhtK0NrD1d5mqkurhXeXU/gviz/tq?tqx=out:csv&sheet=DATA ACTIVITY",
-    },
-    "CARELINE": {
-        "ticket": "https://docs.google.com/spreadsheets/d/10GxKf8rurFofXf86BdsnLJWly1eNOijjAz8_GPHftqQ/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
-        "csat": "https://docs.google.com/spreadsheets/d/10GxKf8rurFofXf86BdsnLJWly1eNOijjAz8_GPHftqQ/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
-        "goapp": "https://docs.google.com/spreadsheets/d/10GxKf8rurFofXf86BdsnLJWly1eNOijjAz8_GPHftqQ/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
-        "interaction": "https://docs.google.com/spreadsheets/d/10GxKf8rurFofXf86BdsnLJWly1eNOijjAz8_GPHftqQ/gviz/tq?tqx=out:csv&sheet=INTERACTION",
-    },
-    "CUSTCARE": {
-        "ticket": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA TICKET",
-        "csat": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
-        "goapp": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=DATA GOAPP",
-        "interaction": "https://docs.google.com/spreadsheets/d/1Iv-4W7Aha50oL76yM-kamet1k2L4dfH_VVKMjyXtgVI/gviz/tq?tqx=out:csv&sheet=INTERACTION",
-    },
-    "ADMIN": {
-        "admin_kpi": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=On Board Master",
-        "csat": "https://docs.google.com/spreadsheets/d/1f4RQTBIL7mRHGHCAQ0ewgi2SfzybXiiLP_tsnEjAHZE/gviz/tq?tqx=out:csv&sheet=DATA CSAT",
-    }
-}
-
-sheet_names = list(GOOGLE_SHEET_LINKS.keys())
+sheet_names = list(st.secrets["SPREADSHEETS"].keys())
 selected_sheet = st.sidebar.selectbox("📄 Pilih Sheet:", sheet_names)
-df = pd.DataFrame()
-if selected_sheet in ["SUPPORT", "CARELINE", "CUSTCARE"]:
-    df = load_data(GOOGLE_SHEET_LINKS[selected_sheet]["ticket"])
 
+df = pd.DataFrame()
 df_visit = df_csat = df_goapp = df_efftime = df_interaksi = df_admin_kpi = None
 
 # ⬇️ SUPPORT
 if selected_sheet == "SUPPORT":
-    df_visit = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("visit", ""))
-    df_efftime = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("activity", ""))
+    data = load_many("SUPPORT", ("ticket",))
+    df = data["ticket"]
 
 # ⬇️ CARELINE
 elif selected_sheet == "CARELINE":
-    df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
-    df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
-    df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
-
-# ⬇️ ADMIN
-elif selected_sheet == "ADMIN":
-    df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
-    df_admin_kpi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("admin_kpi", ""))
+    data = load_many("CARELINE", ("ticket",))
+    df = data["ticket"]
 
 # ⬇️ CUSTCARE
 elif selected_sheet == "CUSTCARE":
-    df_goapp = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("goapp", ""))
-    df_csat = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("csat", ""))
-    df_interaksi = load_data(GOOGLE_SHEET_LINKS[selected_sheet].get("interaction", ""))
+    data = load_many("CUSTCARE", ("ticket",))
+    df = data["ticket"]
+
+# ⬇️ ADMIN
+elif selected_sheet == "ADMIN":
+    data = load_many("ADMIN", ("admin_kpi",))   # atau ("admin_kpi",) kalau KPI tab yang utama
+    df_admin_kpi = data["admin_kpi"]
 
 # ===============================
 # 🧹 PARSING & VALIDASI DATA
@@ -1308,38 +1380,34 @@ st.sidebar.header("📊 Filter Data")
 filter_mode = st.sidebar.radio("🎯 Mode Filter Tanggal", ["Per Hari", "Per Bulan", "Per Tahun"], horizontal=True)
 
 # ===============================
-# Tentukan sumber tanggal fleksibel
+# 📅 Range tanggal sidebar: ambil dari BASE dataset saja (biar enteng)
 # ===============================
-df_tanggal_sources = []
-# ADMIN: tanggal HARUS cuma dari df_admin_kpi (biar filter gak kebawa CSAT/dll)
 if selected_sheet == "ADMIN":
-    tanggal_sources = [df_admin_kpi]
-elif selected_sheet == "SUPPORT":
-    tanggal_sources = [df, df_visit, df_efftime]
-elif selected_sheet == "CARELINE":
-    tanggal_sources = [df, df_csat, df_goapp, df_interaksi]
-else:  # CUSTCARE
-    tanggal_sources = [df, df_goapp, df_csat, df_interaksi]
-
-for df_source in tanggal_sources:
-    if df_source is not None and not df_source.empty and "Created" in df_source.columns:
-        tmp = df_source.copy()
-        tmp["Created"] = robust_parse_datetime(tmp["Created"])
-        df_valid = tmp[["Created"]].dropna()
-        if not df_valid.empty:
-            df_tanggal_sources.append(df_valid)
-
-df_tanggal = pd.concat(df_tanggal_sources, ignore_index=True) if df_tanggal_sources else pd.DataFrame(columns=["Created"])
-
-# Pastikan tanggal valid
-if "Created" in df_tanggal.columns:
-    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors="coerce", dayfirst=True)   
-    min_date = df_tanggal["Created"].min()
-    max_date = df_tanggal["Created"].max()
+    base_dates = df_admin_kpi["Created"] if (df_admin_kpi is not None and "Created" in df_admin_kpi.columns) else pd.Series([], dtype="datetime64[ns]")
 else:
-    min_date = max_date = pd.to_datetime("today")
+    base_dates = df["Created"] if ("Created" in df.columns) else pd.Series([], dtype="datetime64[ns]")
 
-start_date = end_date = None
+base_dates = robust_parse_datetime(base_dates)
+base_dates = pd.to_datetime(base_dates, errors="coerce")
+
+if base_dates.notna().any():
+    min_date = base_dates.min()
+    max_date = base_dates.max()
+else:
+    today = pd.to_datetime("today")
+    min_date = today.normalize()
+    max_date = today
+
+start_date = None
+end_date = None
+selected_month_numbers = []
+
+month_map = {
+    1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
+    5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
+    9: "September", 10: "Oktober", 11: "November", 12: "Desember"
+}
+reverse_month_map = {v: k for k, v in month_map.items()}
 
 # 🎯 Per Hari
 if filter_mode == "Per Hari":
@@ -1355,74 +1423,54 @@ if filter_mode == "Per Hari":
 
 # 📅 Per Bulan
 elif filter_mode == "Per Bulan":
-    available_months = sorted(df_tanggal["Created"].dt.month.dropna().unique())
-    available_years = sorted(df_tanggal["Created"].dt.year.dropna().unique())
-
-    month_map = {
-        1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
-        5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
-        9: "September", 10: "Oktober", 11: "November", 12: "Desember"
-    }
+    s = base_dates.dropna()
+    available_months = sorted(s.dt.month.unique().tolist())
+    available_years = sorted(s.dt.year.unique().tolist())
 
     col1, col2 = st.sidebar.columns(2)
-    selected_month = col1.selectbox("📅 Pilih Bulan", available_months, format_func=lambda x: month_map[x])
+    selected_month = int(col1.selectbox("📅 Pilih Bulan", available_months, format_func=lambda x: month_map[int(x)]))
     selected_year = int(col2.selectbox("📅 Pilih Tahun", available_years))
 
-    start_date = datetime.datetime(int(selected_year), int(selected_month), 1)
-    end_day = calendar.monthrange(int(selected_year), int(selected_month))[1]
-    end_date = datetime.datetime(int(selected_year), int(selected_month), end_day, 23, 59, 59)
+    start_date = datetime.datetime(selected_year, selected_month, 1)
+    end_day = calendar.monthrange(selected_year, selected_month)[1]
+    end_date = datetime.datetime(selected_year, selected_month, end_day, 23, 59, 59)
 
 # 📆 Per Tahun (multi-bulan)
 elif filter_mode == "Per Tahun":
-    df_tanggal["Created"] = pd.to_datetime(df_tanggal["Created"], errors='coerce', dayfirst=True)
-
-    available_years = sorted(df_tanggal["Created"].dropna().dt.year.astype(int).unique())
+    s = base_dates.dropna()
+    available_years = sorted(s.dt.year.astype(int).unique().tolist())
     selected_year = int(st.sidebar.selectbox("📅 Pilih Tahun", available_years))
 
-    month_map = {
-        1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
-        5: "Mei", 6: "Juni", 7: "Juli", 8: "Agustus",
-        9: "September", 10: "Oktober", 11: "November", 12: "Desember"
-    }
-    reverse_month_map = {v: k for k, v in month_map.items()}
-
-    available_months = sorted(df_tanggal[df_tanggal["Created"].dt.year == selected_year]["Created"].dt.month.unique())
+    available_months = sorted(s[s.dt.year == selected_year].dt.month.astype(int).unique().tolist())
     month_labels = [month_map[m] for m in available_months]
     selected_months = st.sidebar.multiselect("📅 Pilih Beberapa Bulan", month_labels)
 
     selected_month_numbers = [reverse_month_map[m] for m in selected_months]
-    if selected_month_numbers:
+    if len(selected_month_numbers) > 0:
         start_date = datetime.datetime(selected_year, min(selected_month_numbers), 1)
-        end_date = datetime.datetime(selected_year, max(selected_month_numbers), monthrange(selected_year, max(selected_month_numbers))[1], 23, 59, 59)
+        max_m = max(selected_month_numbers)
+        end_date = datetime.datetime(selected_year, max_m, monthrange(selected_year, max_m)[1], 23, 59, 59)
 
-# 👤 Pilih Agent (MULTI + opsi "All")
-df_sources = [df, df_csat, df_goapp, df_efftime, df_interaksi, df_admin_kpi]
-assign_to_combined = pd.concat(
-    [d[["Assign To"]] for d in df_sources if d is not None and "Assign To" in d.columns],
-    ignore_index=True
-)
-assign_to_combined["Assign To"] = assign_to_combined["Assign To"].astype(str).str.strip()
-
-# Daftar agent unik
-if not assign_to_combined.empty:
-    support_options = sorted(assign_to_combined["Assign To"].dropna().unique().tolist())
-    agent_options = ["All"] + support_options
-    # default hanya "All" supaya tidak memenuhi sidebar dengan chip agent
-    selected_raw = st.sidebar.multiselect("👤 Pilih Agent:", options=agent_options, default=["All"],
-                                          help="Pilih 'All' untuk semua agent, atau kosongkan untuk kembali ke 'All'.")
+# 👤 Pilih Agent (MULTI + opsi "All") dari BASE dataset saja
+if selected_sheet == "ADMIN":
+    s_assign = df_admin_kpi["Assign To"] if (df_admin_kpi is not None and "Assign To" in df_admin_kpi.columns) else pd.Series([], dtype="string")
 else:
-    support_options = []
-    selected_raw = ["All"]
+    s_assign = df["Assign To"] if ("Assign To" in df.columns) else pd.Series([], dtype="string")
 
-# Normalisasi pilihan:
-# - Jika "All" dipilih ATAU user tidak pilih apa pun → gunakan semua agent
-# - Selain itu → gunakan daftar yang dipilih (kecuali string "All")
+s_assign = normalize_text_series(s_assign)
+support_options = sorted(s_assign.dropna().unique().tolist())
+agent_options = ["All"] + support_options
+
+selected_raw = st.sidebar.multiselect(
+    "👤 Pilih Agent:",
+    options=agent_options,
+    default=["All"],
+    help="Pilih 'All' untuk semua agent, atau kosongkan untuk kembali ke 'All'."
+)
+
 use_all = ("All" in selected_raw) or (len(selected_raw) == 0)
 selected_agents = support_options if use_all else [a for a in selected_raw if a != "All"]
-
-# Kompatibilitas variabel lama utk fungsi2 yang masih cek "All"
 support_filter = selected_agents[0] if len(selected_agents) == 1 else "All"
-
 
 # ⚙️ Pilih Service (jika tersedia)
 if "Services" in df.columns:
@@ -1435,111 +1483,7 @@ else:
     layanan = "All"
 
 # ===============================
-# 🧼 Filtering Data Tiket
-# ===============================
-df_filtered = df.copy()
-
-if start_date and end_date and "Created" in df_filtered.columns:
-    df_filtered = df_filtered[
-        (df_filtered["Created"] >= start_date) &
-        (df_filtered["Created"] <= end_date)
-    ]
-
-if filter_mode == "Per Tahun" and "Created" in df_filtered.columns and 'selected_month_numbers' in locals():
-    df_filtered = df_filtered[df_filtered["Created"].dt.month.isin(selected_month_numbers)]
-
-if "Assign To" in df_filtered.columns and selected_agents:
-    df_filtered = df_filtered[df_filtered["Assign To"].isin(selected_agents)]
-
-if layanan != "All" and "Services" in df_filtered.columns:
-    df_filtered = df_filtered[df_filtered["Services"] == layanan]
-
-# ===============================
-# 🧼 Filtering Data CSAT
-# ===============================
-df_csat_filtered = df_csat.copy() if df_csat is not None else pd.DataFrame()
-
-if start_date and end_date and "Created" in df_csat_filtered.columns:
-    df_csat_filtered = df_csat_filtered[
-        (df_csat_filtered["Created"] >= start_date) &
-        (df_csat_filtered["Created"] <= end_date)
-    ]
-if "Assign To" in df_csat_filtered.columns and selected_agents:
-    df_csat_filtered = df_csat_filtered[df_csat_filtered["Assign To"].isin(selected_agents)]
-
-
-# ===============================
-# 🧼 Filtering Data GOAPP
-# ===============================
-df_goapp_filtered = df_goapp.copy() if df_goapp is not None else pd.DataFrame()
-
-if start_date and end_date and "Created" in df_goapp_filtered.columns:
-    df_goapp_filtered = df_goapp_filtered[
-        (df_goapp_filtered["Created"] >= start_date) &
-        (df_goapp_filtered["Created"] <= end_date)
-    ]
-if "Assign To" in df_goapp_filtered.columns and selected_agents:
-    df_goapp_filtered = df_goapp_filtered[df_goapp_filtered["Assign To"].isin(selected_agents)]
-
-# ===============================
-# 🧼 Filtering Data Visit
-# ===============================
-df_visit_filtered = df_visit.copy() if df_visit is not None else pd.DataFrame()
-
-if start_date and end_date and "Schedule Date" in df_visit_filtered.columns:
-    df_visit_filtered = df_visit_filtered[
-        (df_visit_filtered["Schedule Date"] >= start_date) &
-        (df_visit_filtered["Schedule Date"] <= end_date)
-    ]
-if "Assign To" in df_visit_filtered.columns and selected_agents:
-    df_visit_filtered = df_visit_filtered[df_visit_filtered["Assign To"].isin(selected_agents)]
-
-# ===============================
-# 🧼 Filtering Data Activity
-# ===============================
-df_efftime_filtered = df_efftime.copy() if df_efftime is not None else pd.DataFrame()
-
-if start_date and end_date and "Schedule Date" in df_efftime_filtered.columns:
-    df_efftime_filtered = df_efftime_filtered[
-        (df_efftime_filtered["Schedule Date"] >= start_date) &
-        (df_efftime_filtered["Schedule Date"] <= end_date)
-    ]
-if "Assign To" in df_efftime_filtered.columns and selected_agents:
-    df_efftime_filtered = df_efftime_filtered[df_efftime_filtered["Assign To"].isin(selected_agents)]
-
-# ===============================
-# Filtering Data Interaksi
-# ===============================
-df_interaksi_filtered = df_interaksi.copy() if df_interaksi is not None else pd.DataFrame()
-
-if start_date and end_date and "Created" in df_interaksi_filtered.columns:
-    df_interaksi_filtered = df_interaksi_filtered[
-        (df_interaksi_filtered["Created"] >= start_date) &
-        (df_interaksi_filtered["Created"] <= end_date)
-    ]
-
-if "Assign To" in df_interaksi_filtered.columns and selected_agents:
-    df_interaksi_filtered = df_interaksi_filtered[
-        df_interaksi_filtered["Assign To"].isin(selected_agents)
-    ]
-
-# ===============================
-# Filtering Data Admin
-# ===============================
-df_admin_kpi_filtered = df_admin_kpi.copy() if df_admin_kpi is not None else pd.DataFrame()
-
-if start_date and end_date and "Created" in df_admin_kpi_filtered.columns:
-    df_admin_kpi_filtered = df_admin_kpi_filtered[
-        (df_admin_kpi_filtered["Created"] >= start_date) &
-        (df_admin_kpi_filtered["Created"] <= end_date)
-    ]
-
-if "Assign To" in df_admin_kpi_filtered.columns and selected_agents:
-    df_admin_kpi_filtered = df_admin_kpi_filtered[df_admin_kpi_filtered["Assign To"].isin(selected_agents)]
-
-
-# ===============================
-# 🧭 Penentuan Label Tab Dinamis
+# 🧭 Penentuan Label Menu Dinamis
 # ===============================
 if selected_sheet == "SUPPORT":
     tab_labels = ["📄 Data Tiket", "🗓️ Data Visit", "⏱️ Activity"]
@@ -1550,53 +1494,199 @@ elif selected_sheet == "ADMIN":
 else:  # CUSTCARE
     tab_labels = ["📄 Data Tiket", "⏱️ Response Time", "⭐ Data CSAT", "🗣️ Data Interaksi"]
 
-if "last_filter" not in st.session_state:
-    st.session_state.last_filter = (selected_sheet, start_date, end_date, support_filter)
+# =========================================================
+# ✅ Menu (LAZY) + FIX BUG: key menu harus beda per sheet
+# =========================================================
+# Opsi 1 (REKOMENDASI): menu di halaman utama (atas), mirip tabs
+#active_tab = st.radio(
+#    "📌 Menu",
+#    tab_labels,
+#    horizontal=True,
+#    key=f"menu_{selected_sheet}",
+#    index=0
+#)
 
-current_filter = (selected_sheet, start_date, end_date, support_filter)
+#Opsi 2 (kalau lu MAUNYA di sidebar), comment Opsi 1 dan pakai ini:
+active_tab = st.sidebar.radio(
+     "📌 Menu",
+     tab_labels,
+     key=f"menu_{selected_sheet}",
+     index=0
+)
 
-if "active_tab" not in st.session_state or st.session_state.active_tab not in tab_labels:
-    st.session_state.active_tab = tab_labels[0]
 
-# Update hanya jika filter berubah
-if st.session_state.last_filter != current_filter:
-    if st.session_state.active_tab not in tab_labels:
-        st.session_state.active_tab = tab_labels[0]
-    st.session_state.last_filter = current_filter
+# -------------------------------
+# Helper filter umum (biar gak copy-paste)
+# -------------------------------
+def _filter_created(df_in: pd.DataFrame) -> pd.DataFrame:
+    if df_in is None or df_in.empty:
+        return pd.DataFrame()
+    df_out = df_in.copy()
+    if start_date and end_date and "Created" in df_out.columns:
+        df_out["Created"] = robust_parse_datetime(df_out["Created"])
+        df_out = df_out[(df_out["Created"] >= start_date) & (df_out["Created"] <= end_date)]
+    if "Assign To" in df_out.columns and selected_agents:
+        df_out = df_out[df_out["Assign To"].isin(selected_agents)]
+    return df_out
 
-tabs = st.tabs(tab_labels)
+def _filter_schedule(df_in: pd.DataFrame, col="Schedule Date") -> pd.DataFrame:
+    if df_in is None or df_in.empty:
+        return pd.DataFrame()
+    df_out = df_in.copy()
+    if start_date and end_date and col in df_out.columns:
+        df_out[col] = robust_parse_datetime(df_out[col])
+        df_out = df_out[(df_out[col] >= start_date) & (df_out[col] <= end_date)]
+    if "Assign To" in df_out.columns and selected_agents:
+        df_out = df_out[df_out["Assign To"].isin(selected_agents)]
+    return df_out
 
-for i, tab in enumerate(tabs):
-    with tab:
-        label = tab_labels[i]
-        st.session_state.active_tab = label
+# ===============================
+# ✅ Render hanya 1 menu per rerun
+# ===============================
+if active_tab == "📌 KPI Admin" and selected_sheet == "ADMIN":
+    # Lazy load ADMIN KPI
+    if df_admin_kpi is None or df_admin_kpi.empty:
+        df_admin_kpi = load_many("ADMIN", ("admin_kpi",))["admin_kpi"]
 
-        if label == "📌 KPI Admin" and selected_sheet == "ADMIN":
-            render_tab_admin_kpi(df_admin_kpi_filtered, sla_hours=48, selected_agents=selected_agents)
+        if "Created" in df_admin_kpi.columns:
+            df_admin_kpi["Created"] = robust_parse_datetime(df_admin_kpi["Created"])
+        if "Finish" in df_admin_kpi.columns:
+            df_admin_kpi["Finish"] = robust_parse_datetime(df_admin_kpi["Finish"])
 
-        elif label == "📄 Data Tiket":
-            # BIARIN buat SUPPORT/CARELINE/CUSTCARE
-            total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi = calculate_ticket_metrics(df_filtered)
-            render_tab_tiket(
-                df_filtered, layanan, service_options,
-                total_tiket, selesai_24_jam, selesai_lebih_24_jam,
-                belum_selesai, avg_durasi, support_filter
+        if "Created" in df_admin_kpi.columns and "Finish" in df_admin_kpi.columns:
+            df_admin_kpi["Durasi (Jam)"] = (df_admin_kpi["Finish"] - df_admin_kpi["Created"]).dt.total_seconds() / 3600
+
+        # KPI Scope mapping (tetap seperti punyamu)
+        if "KPI Scope" not in df_admin_kpi.columns:
+            df_admin_kpi["KPI Scope"] = pd.NA
+        df_admin_kpi["KPI Scope"] = normalize_text_series(df_admin_kpi["KPI Scope"])
+
+        if "TAG" in df_admin_kpi.columns:
+            df_admin_kpi["TAG"] = normalize_text_series(df_admin_kpi["TAG"])
+            tag_u = df_admin_kpi["TAG"].astype("string").str.upper().str.strip()
+
+            sla_qty_tags = {"NEW DB", "NEW BRAND", "NEW BRANCH"}
+            qty_only_tags = {"ESO", "REVISI MENU"}
+
+            scope_u = df_admin_kpi["KPI Scope"].astype("string").str.upper().str.strip()
+            scope_empty = scope_u.isna() | (scope_u == "") | (scope_u == "<NA>")
+
+            df_admin_kpi.loc[scope_empty & tag_u.isin(sla_qty_tags), "KPI Scope"] = "SLA & QTY"
+            df_admin_kpi.loc[scope_empty & tag_u.isin(qty_only_tags), "KPI Scope"] = "QTY"
+
+    # Filter ADMIN KPI
+    df_admin_kpi_filtered = df_admin_kpi.copy()
+    if start_date and end_date and "Created" in df_admin_kpi_filtered.columns:
+        df_admin_kpi_filtered = df_admin_kpi_filtered[
+            (df_admin_kpi_filtered["Created"] >= start_date) &
+            (df_admin_kpi_filtered["Created"] <= end_date)
+        ]
+    if "Assign To" in df_admin_kpi_filtered.columns and selected_agents:
+        df_admin_kpi_filtered = df_admin_kpi_filtered[df_admin_kpi_filtered["Assign To"].isin(selected_agents)]
+
+    render_tab_admin_kpi(df_admin_kpi_filtered, sla_hours=48, selected_agents=selected_agents)
+
+elif active_tab == "📄 Data Tiket":
+    # Ticket udah ada untuk SUPPORT/CARELINE/CUSTCARE dari load awal lu
+    df_filtered = df.copy()
+
+    if start_date and end_date and "Created" in df_filtered.columns:
+        df_filtered = df_filtered[(df_filtered["Created"] >= start_date) & (df_filtered["Created"] <= end_date)]
+
+    if filter_mode == "Per Tahun" and "Created" in df_filtered.columns and 'selected_month_numbers' in locals():
+        df_filtered = df_filtered[df_filtered["Created"].dt.month.isin(selected_month_numbers)]
+
+    if "Assign To" in df_filtered.columns and selected_agents:
+        df_filtered = df_filtered[df_filtered["Assign To"].isin(selected_agents)]
+
+    if layanan != "All" and "Services" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["Services"] == layanan]
+
+    total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi = calculate_ticket_metrics(df_filtered)
+    render_tab_tiket(
+        df_filtered, layanan, service_options,
+        total_tiket, selesai_24_jam, selesai_lebih_24_jam,
+        belum_selesai, avg_durasi, support_filter
+    )
+
+elif active_tab == "🗓️ Data Visit" and selected_sheet == "SUPPORT":
+    # Lazy load Visit
+    if df_visit is None or df_visit.empty:
+        df_visit = load_many("SUPPORT", ("visit",))["visit"]
+        if "Schedule Date" in df_visit.columns:
+            df_visit["Schedule Date"] = robust_parse_datetime(df_visit["Schedule Date"])
+        if "Visit Date" in df_visit.columns:
+            df_visit["Visit Date"] = robust_parse_datetime(df_visit["Visit Date"])
+
+    df_visit_filtered = _filter_schedule(df_visit, col="Schedule Date")
+    render_tab_visit(df_visit_filtered, support_filter)
+
+elif active_tab == "⏱️ Activity" and selected_sheet == "SUPPORT":
+    # Lazy load Activity
+    if df_efftime is None or df_efftime.empty:
+        df_efftime = load_many("SUPPORT", ("activity",))["activity"]
+        if "Schedule Date" in df_efftime.columns:
+            df_efftime["Schedule Date"] = pd.to_datetime(df_efftime["Schedule Date"], errors="coerce", dayfirst=True)
+        if "Duration" in df_efftime.columns:
+            df_efftime["Duration"] = pd.to_timedelta(df_efftime["Duration"], errors="coerce")
+        if "Check In" in df_efftime.columns:
+            df_efftime["Check In"] = robust_parse_datetime(df_efftime["Check In"])
+        if "Check Out" in df_efftime.columns:
+            df_efftime["Check Out"] = robust_parse_datetime(df_efftime["Check Out"])
+
+        if "Check In" in df_efftime.columns and "Check Out" in df_efftime.columns:
+            df_efftime["Status"] = df_efftime.apply(
+                lambda row: "Missing" if pd.isna(row.get("Check In")) or pd.isna(row.get("Check Out")) else "OK",
+                axis=1
             )
+            standard_duration = pd.to_timedelta("9:00:00")
+            if "Duration" in df_efftime.columns:
+                df_efftime["Un-effective Time"] = standard_duration - df_efftime["Duration"]
 
-        elif label == "🗓️ Data Visit" and selected_sheet == "SUPPORT":
-            render_tab_visit(df_visit_filtered, support_filter)
+    df_efftime_filtered = _filter_schedule(df_efftime, col="Schedule Date")
+    render_tab_activity(df_efftime_filtered, support_filter)
 
-        elif label == "⭐ Data CSAT" and selected_sheet in ["CARELINE", "ADMIN", "CUSTCARE"]:
-            render_tab_csat(df_csat_filtered, support_filter)
+elif active_tab == "⭐ Data CSAT" and selected_sheet in ["CARELINE", "ADMIN", "CUSTCARE"]:
+    # Lazy load CSAT
+    if df_csat is None or df_csat.empty:
+        df_csat = load_many(selected_sheet, ("csat",))["csat"]
+        if "Created" in df_csat.columns:
+            df_csat["Created"] = pd.to_datetime(df_csat["Created"], errors="coerce", dayfirst=True)
+        if "Rating" in df_csat.columns:
+            df_csat["Rating"] = pd.to_numeric(df_csat["Rating"], errors="coerce")
 
-        elif label == "⏱️ Response Time" and selected_sheet in ["CARELINE", "CUSTCARE"]:
-            render_tab_response_time(df_goapp_filtered, support_filter)
+    df_csat_filtered = _filter_created(df_csat)
+    render_tab_csat(df_csat_filtered, support_filter)
 
-        elif label == "⏱️ Activity" and selected_sheet == "SUPPORT":
-            render_tab_activity(df_efftime_filtered, support_filter)
+elif active_tab == "⏱️ Response Time" and selected_sheet in ["CARELINE", "CUSTCARE"]:
+    # Lazy load GOAPP
+    if df_goapp is None or df_goapp.empty:
+        df_goapp = load_many(selected_sheet, ("goapp",))["goapp"]
+        if "Created" in df_goapp.columns:
+            df_goapp["Created"] = robust_parse_datetime(df_goapp["Created"])
+        if "First Response Time" in df_goapp.columns:
+            df_goapp["First Response Time"] = pd.to_timedelta(df_goapp["First Response Time"], errors="coerce")
+        if "Total Open Time" in df_goapp.columns:
+            df_goapp["Total Open Time"] = pd.to_timedelta(df_goapp["Total Open Time"], errors="coerce")
 
-        elif label == "🗣️ Data Interaksi" and selected_sheet in ["CARELINE", "CUSTCARE"]:
-            render_tab_interaksi(df_interaksi_filtered, df_goapp_filtered)
+    df_goapp_filtered = _filter_created(df_goapp)
+    render_tab_response_time(df_goapp_filtered, support_filter)
+
+elif active_tab == "🗣️ Data Interaksi" and selected_sheet in ["CARELINE", "CUSTCARE"]:
+    # Lazy load Interaction
+    if df_interaksi is None or df_interaksi.empty:
+        df_interaksi = load_many(selected_sheet, ("interaction",))["interaction"]
+        if "Created" in df_interaksi.columns:
+            df_interaksi["Created"] = robust_parse_datetime(df_interaksi["Created"])
+
+    df_interaksi_filtered = _filter_created(df_interaksi)
+
+    # GOAPP optional untuk hitung jumlah chat
+    df_goapp_for_count = None
+    if df_goapp is not None and not df_goapp.empty:
+        df_goapp_for_count = _filter_created(df_goapp)
+
+    render_tab_interaksi(df_interaksi_filtered, df_goapp_for_count)
 
 # 🔄 Tombol Refresh
 if st.button("🔄 Refresh Data"):
