@@ -63,13 +63,26 @@ def robust_parse_datetime(series):
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
 
-    s = series.astype("string")
+    s = series.copy()
+
+    # Case 1: numeric (Google Sheets serial date)
+    if pd.api.types.is_numeric_dtype(s):
+        base = pd.Timestamp("1899-12-30")  # base serial Google Sheets/Excel
+        return base + pd.to_timedelta(pd.to_numeric(s, errors="coerce"), unit="D")
+
+    # Case 2: string
+    s = s.astype("string")
     s = s.str.replace(_NBSP, " ", regex=False).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    # Kalau mayoritas isi string numeric -> treat sebagai serial juga
+    num = pd.to_numeric(s, errors="coerce")
+    if num.notna().mean() > 0.8:
+        base = pd.Timestamp("1899-12-30")
+        return base + pd.to_timedelta(num, unit="D")
 
     dt1 = pd.to_datetime(s, errors="coerce", dayfirst=True)
     dt2 = pd.to_datetime(s, errors="coerce", dayfirst=False)
     return dt1 if dt1.isna().sum() <= dt2.isna().sum() else dt2
-
 
 # =========================
 # 📦 Fungsi Utility Umum
@@ -367,6 +380,16 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
 
         # Step 2: Buat kolom hanya tanggal saja untuk grouping
         df_filtered["Created_Date"] = df_filtered["Created"].dt.date  # ← penting!
+        # --- DEBUG cepat: cek parsing & konsistensi ---
+        df_filtered = df_filtered.copy()
+        df_filtered["Created"] = robust_parse_datetime(df_filtered["Created"])
+        df_filtered["Durasi (Jam)"] = pd.to_numeric(df_filtered.get("Durasi (Jam)"), errors="coerce")
+
+        bad_created = int(df_filtered["Created"].isna().sum())
+        bad_durasi  = int(df_filtered["Durasi (Jam)"].isna().sum())
+
+        st.caption(f"DEBUG: rows={len(df_filtered)} | Created NaT={bad_created} | Durasi NaN={bad_durasi} | "
+                f"Created min={df_filtered['Created'].min()} max={df_filtered['Created'].max()}")
 
         # Step 3: Group by Created_Date (bukan Created full datetime)
         df_summary = df_filtered.groupby("Created_Date").agg(
@@ -1691,4 +1714,3 @@ elif active_tab == "🗣️ Data Interaksi" and selected_sheet in ["CARELINE", "
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
-
