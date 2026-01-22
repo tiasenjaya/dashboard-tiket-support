@@ -1,5 +1,8 @@
 streamlit==1.44.1
 pandas==2.2.3
 plotly==6.1.0
-google-api-python-client
-google-auth
+google-api-python-client==2.188.0
+google-auth==2.47.0
+google-auth-httplib2==0.3.0
+httplib2==0.31.1
+cachetools==5.5.2
