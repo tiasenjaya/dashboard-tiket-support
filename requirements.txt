@@ -3,5 +3,4 @@ streamlit
 plotly
 google-api-python-client
 google-auth
-
-
+altair==4.2.2
