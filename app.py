@@ -257,17 +257,28 @@ def calculate_admin_qty_metrics(df):
 # 🗓️ Visit Metrics
 # =========================
 def calculate_visit_metrics(df):
+    if df is None or df.empty:
+        return 0, 0, 0, 0
+
+    df = df.copy()
+
     # Hitung durasi dalam jam jika belum ada
     if "Durasi (Jam)" not in df.columns:
-        df["Schedule Date"] = pd.to_datetime(df["Schedule Date"], errors='coerce')
-        df["Visit Date"] = pd.to_datetime(df["Visit Date"], errors='coerce')
-        df["Durasi (Jam)"] = (df["Visit Date"] - df["Schedule Date"]).dt.total_seconds() / 3600
+        if "Schedule Date" in df.columns:
+            df["Schedule Date"] = pd.to_datetime(df["Schedule Date"], errors="coerce")
+        if "Visit Date" in df.columns:
+            df["Visit Date"] = pd.to_datetime(df["Visit Date"], errors="coerce")
 
-    visited_df = df[df["Status"] == "Visited"]
+        if "Schedule Date" in df.columns and "Visit Date" in df.columns:
+            df["Durasi (Jam)"] = (df["Visit Date"] - df["Schedule Date"]).dt.total_seconds() / 3600
+        else:
+            df["Durasi (Jam)"] = pd.NA
+
+    visited_df = df[df.get("Status", "") == "Visited"]
     total_visit = len(visited_df)
-    selesai_hari_h = len(visited_df[visited_df["Durasi (Jam)"] <= 24])
-    selesai_setelah_hari_h = len(visited_df[visited_df["Durasi (Jam)"] > 24])
-    belum_dikunjungi = len(df[df["Status"] != "Visited"]) if "Status" in df.columns else 0
+    selesai_hari_h = int((pd.to_numeric(visited_df["Durasi (Jam)"], errors="coerce") <= 24).sum()) if total_visit > 0 else 0
+    selesai_setelah_hari_h = int((pd.to_numeric(visited_df["Durasi (Jam)"], errors="coerce") > 24).sum()) if total_visit > 0 else 0
+    belum_dikunjungi = int((df.get("Status", "") != "Visited").sum()) if "Status" in df.columns else 0
 
     return total_visit, selesai_hari_h, selesai_setelah_hari_h, belum_dikunjungi
 
@@ -332,10 +343,19 @@ def metric_card(label, value, sub=None):
 # ===============================
 # 🎟️ TAB: Data Tiket
 # ===============================
-def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi, support_filter):
+def render_tab_tiket(
+        df_filtered, 
+        service_options, 
+        total_tiket, 
+        selesai_24_jam, 
+        selesai_lebih_24_jam, 
+        belum_selesai, 
+        avg_durasi, 
+        support_filter):
+    
     st.title("📊 PERFORMANCE DASHBOARD")
     st.subheader("📌 Performa Penyelesaian Tiket")
-    layanan = st.radio("⚙️ Pilih Jenis Services:", options=service_options, key="layanan")
+    st.radio("⚙️ Pilih Jenis Services:", options=service_options, key="layanan")
 
     progress = total_tiket - belum_selesai
     progress_percentage = (progress / total_tiket) * 100 if total_tiket > 0 else 0
@@ -375,46 +395,61 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
 
     st.subheader("📊 Grafik Bar Chart (Total Tiket vs Tiket Selesai)")
     if not df_filtered.empty:
-        # Step 1: Pastikan kolom Created sudah datetime
-        df_filtered["Created"] = robust_parse_datetime(df_filtered["Created"])
+        # ✅ selalu copy dulu biar gak kena SettingWithCopy
+        dfc = df_filtered.copy()
 
-        # Step 2: Buat kolom hanya tanggal saja untuk grouping
-        df_filtered["Created_Date"] = df_filtered["Created"].dt.date  # ← penting!
-        # --- DEBUG cepat: cek parsing & konsistensi ---
-        df_filtered = df_filtered.copy()
-        df_filtered["Created"] = robust_parse_datetime(df_filtered["Created"])
-        df_filtered["Durasi (Jam)"] = pd.to_numeric(df_filtered.get("Durasi (Jam)"), errors="coerce")
+        # parse kolom penting
+        dfc["Created"] = robust_parse_datetime(dfc["Created"])
+        dfc["Durasi (Jam)"] = pd.to_numeric(dfc.get("Durasi (Jam)"), errors="coerce")
 
-        bad_created = int(df_filtered["Created"].isna().sum())
-        bad_durasi  = int(df_filtered["Durasi (Jam)"].isna().sum())
+        # buang Created yang gagal parse (NaT) biar grouping stabil
+        dfc = dfc[dfc["Created"].notna()].copy()
 
-        st.caption(f"DEBUG: rows={len(df_filtered)} | Created NaT={bad_created} | Durasi NaN={bad_durasi} | "
-                f"Created min={df_filtered['Created'].min()} max={df_filtered['Created'].max()}")
+        # tanggal-only untuk grouping
+        dfc["Created_Date"] = dfc["Created"].dt.date
 
-        # Step 3: Group by Created_Date (bukan Created full datetime)
-        df_summary = df_filtered.groupby("Created_Date").agg(
+        # diagnostics tapi cuma kalau debug aktif
+        if "debug" in globals() and debug:
+            bad_created = int(dfc["Created"].isna().sum())
+            bad_durasi = int(dfc["Durasi (Jam)"].isna().sum())
+            st.caption(
+                f"DEBUG: rows={len(dfc)} | Created NaT={bad_created} | Durasi NaN={bad_durasi} | "
+                f"Created min={dfc['Created'].min()} max={dfc['Created'].max()}"
+            )
+
+        # summary per hari
+        df_summary = dfc.groupby("Created_Date").agg(
             Total_Tiket=("Created", "count"),
-            Selesai_24_Jam=("Durasi (Jam)", lambda x: (x <= 24).sum())).reset_index()
-            
-        # Konversi ulang Created_Date agar bisa pakai .dt
-        df_summary["Created_Date"] = pd.to_datetime(df_summary["Created_Date"], errors="coerce")
+            Selesai_24_Jam=("Durasi (Jam)", lambda x: (x <= 24).sum())
+        ).reset_index()
 
-        # Format string
+        df_summary["Created_Date"] = pd.to_datetime(df_summary["Created_Date"], errors="coerce")
         df_summary["Created Display"] = df_summary["Created_Date"].dt.strftime("%Y-%m-%d")
-       
+
         fig_bar = px.bar(
             df_summary,
             x="Created Display",
             y=["Total_Tiket", "Selesai_24_Jam"],
             color_discrete_sequence=get_default_colors(),
             barmode="group",
-            labels={"Created": "Tanggal", "value": "Jumlah Tiket"},
+            labels={"Created Display": "Tanggal", "value": "Jumlah Tiket", "variable": ""},
             title="Total Tiket vs Tiket Selesai ≤ 24 Jam (Bar Chart)"
-            )
-        fig_bar.update_traces(textposition="outside", cliponaxis=False)
+        )
+
+        # ✅ angka di bar + “bold look”
+        fig_bar.update_traces(
+            texttemplate="%{y}",
+            textposition="outside",
+            cliponaxis=False,
+            textfont=dict(size=12, family="Arial Black")
+        )
+
+        # ✅ tambah headroom biar angka gak kepotong
+        max_y = int(df_summary[["Total_Tiket", "Selesai_24_Jam"]].to_numpy().max()) if not df_summary.empty else 0
+        fig_bar.update_yaxes(range=[0, max_y * 1.15 if max_y > 0 else 1])
+
         fig_bar.update_xaxes(type="category", tickangle=45)
         fig_bar.update_layout(margin=dict(t=80, b=80, l=50, r=30), height=520)
-
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.subheader("🥇 Distribusi Penyelesaian Tiket")
@@ -475,15 +510,22 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             "Cukup": 60,
             "Kurang Baik": 50}
 
-        selected_agents = []
+        selected_representatives = []
 
         for klasifikasi, target in target_klasifikasi.items():
             df_k = agent_summary[agent_summary["Klasifikasi"] == klasifikasi].copy()
             if not df_k.empty:
-                selected_agents.append(df_k.sort_values("Ontime_Percentage", ascending=False).iloc[0])
+                # pilih agent yang PERSENnya paling dekat dengan target
+                df_k["_dist"] = (df_k["Ontime_Percentage"] - target).abs()
+                picked = df_k.sort_values(["_dist", "Ontime_Percentage"], ascending=[True, False]).iloc[0]
+                selected_representatives.append(picked)
 
         # Gabungkan agent hasil seleksi
-        representative_df = pd.DataFrame(selected_agents).reset_index(drop=True)
+        representative_df = (
+            pd.DataFrame(selected_representatives)
+            .drop(columns=["_dist"], errors="ignore")
+            .reset_index(drop=True)
+        )
 
         # Tampilkan hasil klasifikasi ringkas
         for _, row in representative_df.iterrows():
@@ -1192,9 +1234,7 @@ def render_tab_response_time(df_filtered, support_filter):
     df_display["Avg Open"] = df_display["Avg Open"].apply(format_hhmmss)
 
     st.markdown("### 📊 Ringkasan per Agent")
-    st.dataframe(
-        df_display.style.highlight_max(axis=0, subset=["Avg First", "Avg Open"], color="lightcoral")
-    )
+    st.dataframe(df_display, use_container_width=True)
 
     col_f, col_s = st.columns(2)
     with col_f:
@@ -1399,7 +1439,15 @@ if df_admin_kpi is not None:
 # 📊 Sidebar Filter Umum
 # ===============================
 st.sidebar.header("📊 Filter Data")
-filter_mode = st.sidebar.radio("🎯 Mode Filter Tanggal", ["Per Hari", "Per Bulan", "Per Tahun"], horizontal=True)
+
+# ✅ Diagnostics toggle (bisa dimatiin biar UI bersih)
+debug = st.sidebar.checkbox("🧪 Diagnostics", value=False)
+
+filter_mode = st.sidebar.radio(
+    "🎯 Mode Filter Tanggal",
+    ["Per Hari", "Per Bulan", "Per Tahun"],
+    horizontal=True
+)
 
 # ===============================
 # 📅 Range tanggal sidebar: ambil dari BASE dataset saja (biar enteng)
@@ -1493,6 +1541,27 @@ selected_raw = st.sidebar.multiselect(
 use_all = ("All" in selected_raw) or (len(selected_raw) == 0)
 selected_agents = support_options if use_all else [a for a in selected_raw if a != "All"]
 support_filter = selected_agents[0] if len(selected_agents) == 1 else "All"
+
+# ✅ Panel diagnostics (muncul cuma kalau debug=True)
+if debug:
+    import sys
+    with st.sidebar.expander("🔎 Env & Data Diagnostics", expanded=True):
+        st.write("Python:", sys.version)
+
+        # versi package
+        st.write("streamlit:", st.__version__)
+        st.write("pandas:", pd.__version__)
+        st.write("plotly:", px.__version__ if hasattr(px, "__version__") else "n/a")
+
+        # data sanity
+        if selected_sheet == "ADMIN":
+            st.write("df_admin_kpi rows:", 0 if df_admin_kpi is None else len(df_admin_kpi))
+            if df_admin_kpi is not None and "Created" in df_admin_kpi.columns:
+                st.write("admin Created NaT:", int(pd.to_datetime(df_admin_kpi["Created"], errors="coerce").isna().sum()))
+        else:
+            st.write("df rows:", len(df))
+            if "Created" in df.columns:
+                st.write("Created NaT:", int(pd.to_datetime(df["Created"], errors="coerce").isna().sum()))
 
 # ⚙️ Pilih Service (jika tersedia)
 if "Services" in df.columns:
@@ -1626,7 +1695,7 @@ elif active_tab == "📄 Data Tiket":
 
     total_tiket, selesai_24_jam, selesai_lebih_24_jam, belum_selesai, avg_durasi = calculate_ticket_metrics(df_filtered)
     render_tab_tiket(
-        df_filtered, layanan, service_options,
+        df_filtered, service_options,
         total_tiket, selesai_24_jam, selesai_lebih_24_jam,
         belum_selesai, avg_durasi, support_filter
     )
