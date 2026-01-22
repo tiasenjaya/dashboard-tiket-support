@@ -388,12 +388,11 @@ def render_tab_tiket(df_filtered, layanan, service_options, total_tiket, selesai
             labels={"Created": "Tanggal", "value": "Jumlah Tiket"},
             title="Total Tiket vs Tiket Selesai ≤ 24 Jam (Bar Chart)"
             )
-        for trace in fig_bar.data:
-            trace.text = trace.y
-            trace.textposition = 'outside'
-        # Penting! ubah x-axis ke mode kategori agar tanggal kosong disembunyikan
+        fig_bar.update_traces(textposition="outside", cliponaxis=False)
         fig_bar.update_xaxes(type="category", tickangle=45)
-        st.plotly_chart(fig_bar)
+        fig_bar.update_layout(margin=dict(t=80, b=80, l=50, r=30), height=520)
+
+        st.plotly_chart(fig_bar, use_container_width=True)
 
     st.subheader("🥇 Distribusi Penyelesaian Tiket")
     colors = get_default_colors()
@@ -1692,3 +1691,4 @@ elif active_tab == "🗣️ Data Interaksi" and selected_sheet in ["CARELINE", "
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
+
